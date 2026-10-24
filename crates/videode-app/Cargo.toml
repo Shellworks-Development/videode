@@ -1,0 +1,24 @@
+[package]
+name = "videode-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "videode"
+path = "src/main.rs"
+
+[dependencies]
+videode-core.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+# Headless rendering for screenshot snapshots. Enabled on GPUI directly because
+# gpui-kit's own `test-support` pulls in gpui-fast, which conflicts on macOS deps.
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["test-support"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
