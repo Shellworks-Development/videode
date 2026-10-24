@@ -1,875 +1,648 @@
-//! The editor shell: top bar, media bin, viewer, inspector, timeline and
-//! status bar, laid out as in `mockup/videode.html`.
-//!
-//! M0 renders the empty-project state. Editing, playback and the node views
-//! arrive in later milestones.
+//! The editor window: owns the document being edited and the view state
+//! (playhead, selection, tool, zoom), handles every action, and lays out the
+//! panels. Panels live in `panels.rs`, the timeline in `timeline.rs`.
 
-use gpui_kit::component::{Icon, tooltip::Tooltip};
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, Hsla, IntoElement, Render, SharedString, Window, div, px,
+    Context, FocusHandle, PathPromptOptions, PromptLevel, Render, SharedString, Window, div, px,
     relative,
 };
+use videode_core::kdl_io::{from_kdl, to_kdl};
+use videode_core::{
+    ClipId, Document, EditResult, Frame, Project, TrackId, demo::demo_project, time,
+};
 
-use crate::theme::{self, Category, c, hex};
+use crate::actions::*;
+use crate::theme::{self, c, hex};
+use crate::timeline::TimelineState;
+use crate::ui::cmd_key;
 
-const TOP_BAR_H: f32 = 38.;
-const STATUS_H: f32 = 26.;
-const BIN_W: f32 = 264.;
-const INSPECTOR_W: f32 = 304.;
-const TIMELINE_H: f32 = 340.;
-const PANE_HEADER_H: f32 = 32.;
-const TRACK_HEADS_W: f32 = 168.;
-const RULER_H: f32 = 28.;
-/// Ruler scale for the empty timeline: pixels per second.
-const PX_PER_SEC: f32 = 24.;
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tool {
+    Select,
+    Blade,
+}
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum BinTab {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BinTab {
     Media,
     Nodes,
 }
 
-struct TrackHead {
-    id: &'static str,
-    name: &'static str,
-    audio: bool,
-    height: f32,
+pub(crate) struct Playback {
+    origin: Frame,
+    started: Instant,
+    pub(crate) speed: f64,
 }
 
-const TRACKS: [TrackHead; 4] = [
-    TrackHead {
-        id: "V2",
-        name: "Titles",
-        audio: false,
-        height: 52.,
-    },
-    TrackHead {
-        id: "V1",
-        name: "Picture",
-        audio: false,
-        height: 64.,
-    },
-    TrackHead {
-        id: "A1",
-        name: "Voice",
-        audio: true,
-        height: 48.,
-    },
-    TrackHead {
-        id: "A2",
-        name: "Music",
-        audio: true,
-        height: 48.,
-    },
-];
-
-/// Node types shown in the library, grouped by category.
-const NODE_LIBRARY: [(Category, &str, &str); 8] = [
-    (
-        Category::Transform,
-        "Transform",
-        "Position, scale, rotation",
-    ),
-    (Category::Transform, "Crop", "Trim the frame edges"),
-    (
-        Category::Look,
-        "Grade",
-        "Exposure, white balance, saturation",
-    ),
-    (Category::Look, "Blur", "Gaussian blur"),
-    (Category::Composite, "Opacity", "Opacity and blend mode"),
-    (Category::Composite, "Fade", "Fade in and out over frames"),
-    (Category::Audio, "Gain", "Level in decibels"),
-    (
-        Category::Audio,
-        "Duck",
-        "Lower this clip under another track",
-    ),
-];
+pub(crate) struct Status {
+    pub text: SharedString,
+    pub error: bool,
+}
 
 pub struct Workspace {
-    bin_tab: BinTab,
+    pub(crate) doc: Document,
+    pub(crate) focus: FocusHandle,
+    pub(crate) playhead: Frame,
+    pub(crate) selection: Option<ClipId>,
+    pub(crate) tool: Tool,
+    pub(crate) snap: bool,
+    pub(crate) bin_tab: BinTab,
+    pub(crate) tl: TimelineState,
+    pub(crate) status: Status,
+    pub(crate) playback: Option<Playback>,
+    title: String,
 }
 
 impl Workspace {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::with_document(Document::new(Project::default(), None), window, cx)
+    }
+
+    pub fn with_document(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
         Self {
+            doc,
+            focus,
+            playhead: 0,
+            selection: None,
+            tool: Tool::Select,
+            snap: true,
             bin_tab: BinTab::Media,
+            tl: TimelineState::default(),
+            status: Status {
+                text: "New project · open the demo to try editing, or open a .vde project".into(),
+                error: false,
+            },
+            playback: None,
+            title: String::new(),
         }
     }
 
-    fn top_bar(&self) -> impl IntoElement {
-        let logo = div().flex().gap(px(2.)).mr(px(6.)).children(
-            Category::ALL.map(|cat| div().w(px(3.)).h(px(15.)).rounded(px(1.)).bg(cat.color())),
-        );
-        let menus = ["File", "Edit", "Clip", "View", "Playback", "Help"].map(|name| {
-            div()
-                .id(SharedString::from(format!("menu-{name}")))
-                .h(px(26.))
-                .px(px(8.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .text_color(c(hex::INK_DIM))
-                .hover(|s| s.bg(c(hex::PLUGE_CONTROL)).text_color(c(hex::INK)))
-                .child(name)
-        });
-        let crumbs = div()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .ml(px(14.))
-            .flex_shrink_0()
-            .whitespace_nowrap()
-            .text_color(c(hex::INK_DIM))
-            .child("Untitled project")
-            .child(icon("chevron-right", px(12.), c(hex::INK_FAINT)))
-            .child(
-                div()
-                    .text_color(c(hex::INK))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("Main Sequence"),
-            );
-
-        let command = div()
-            .id("command-palette")
-            .w(px(340.))
-            .min_w(px(150.))
-            .flex_shrink(1.)
-            .h(px(26.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(8.))
-            .pr(px(4.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(c(hex::LINE_STRONG))
-            .bg(c(hex::PLUGE_SUB))
-            .text_color(c(hex::INK_DIM))
-            .hover(|s| s.text_color(c(hex::INK)))
-            .tooltip(|window, cx| Tooltip::new("Every action, node and clip").build(window, cx))
-            .child(icon("search", px(16.), c(hex::INK_DIM)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child("Search actions, nodes, clips…"),
-            )
-            .child(kbd(cmd_key("K")));
-
-        div()
-            .h(px(TOP_BAR_H))
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .pl(px(12.))
-            .pr(px(10.))
-            .bg(c(hex::PLUGE_BLACK))
-            .border_b_1()
-            .border_color(c(hex::LINE))
-            .child(logo)
-            .child(
-                div()
-                    .mr(px(8.))
-                    .text_size(theme::TITLE)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("videode"),
-            )
-            .child(div().flex().children(menus))
-            .child(crumbs)
-            .child(
-                div()
-                    .ml_auto()
-                    .min_w_0()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(command)
-                    .child(icon_button("undo", "undo", "Nothing to undo", true))
-                    .child(icon_button("redo", "redo", "Nothing to redo", true))
-                    .child(button("export", Some("upload"), "Export", true).tooltip(
-                        |window, cx| Tooltip::new("Open the Output node").build(window, cx),
-                    )),
-            )
+    /// For tests and snapshots: set the playhead and selection directly.
+    pub fn set_view(&mut self, playhead: Frame, selection: Option<ClipId>) {
+        self.playhead = playhead;
+        self.selection = selection;
     }
 
-    fn bin(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let tab = |id: &'static str,
-                   label: &'static str,
-                   which: BinTab,
-                   this: &Self,
-                   cx: &mut Context<Self>| {
-            let selected = this.bin_tab == which;
-            div()
-                .id(id)
-                .h(px(24.))
-                .px(px(9.))
-                .flex()
-                .items_center()
-                .rounded(px(5.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(c(if selected { hex::INK } else { hex::INK_DIM }))
-                .when(selected, |d| d.bg(c(hex::PLUGE_CONTROL)))
-                .hover(|s| s.text_color(c(hex::INK)))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.bin_tab = which;
-                    cx.notify();
-                }))
-                .child(label)
+    pub fn document(&self) -> &Document {
+        &self.doc
+    }
+
+    pub(crate) fn project(&self) -> &Project {
+        &self.doc.project
+    }
+
+    pub(crate) fn fps(&self) -> videode_core::Fps {
+        self.doc.project.sequence.fps
+    }
+
+    pub(crate) fn tc(&self, f: Frame) -> String {
+        time::timecode(f, self.fps())
+    }
+
+    pub(crate) fn say(&mut self, text: impl Into<SharedString>) {
+        self.status = Status {
+            text: text.into(),
+            error: false,
         };
+    }
 
-        let header = pane_header()
-            .child(tab("bin-media", "Media", BinTab::Media, self, cx))
-            .child(tab("bin-nodes", "Nodes", BinTab::Nodes, self, cx))
-            .child(div().flex_1())
-            .child(icon_button(
-                "import",
-                "import",
-                &format!("Import media  {}", cmd_key("I")),
-                false,
-            ));
+    pub(crate) fn say_error(&mut self, text: impl Into<SharedString>) {
+        self.status = Status {
+            text: text.into(),
+            error: true,
+        };
+    }
 
-        let filter = div()
-            .m(px(8.))
-            .h(px(26.))
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(8.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(c(hex::LINE))
-            .bg(c(hex::PLUGE_SUB))
-            .text_color(c(hex::INK_FAINT))
-            .child(icon("search", px(16.), c(hex::INK_FAINT)))
-            .child(div().flex_1().child(match self.bin_tab {
-                BinTab::Media => "Filter media",
-                BinTab::Nodes => "Filter nodes",
-            }))
-            .child(kbd("/".into()));
-
-        let body: AnyElement = match self.bin_tab {
-            BinTab::Media => div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(10.))
-                .px(px(16.))
-                .text_color(c(hex::INK_DIM))
-                .child(icon("film", px(24.), c(hex::INK_FAINT)))
-                .child(
-                    div()
-                        .text_color(c(hex::INK))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("No media yet"),
-                )
-                .child(
-                    div()
-                        .text_center()
-                        .child("Drop files anywhere on the window, or import them."),
-                )
-                .child(button("bin-import", Some("import"), "Import media", false))
-                .into_any_element(),
-            BinTab::Nodes => {
-                let mut list = div().flex_1().flex().flex_col().px(px(8.));
-                let mut last: Option<Category> = None;
-                for (cat, name, desc) in NODE_LIBRARY {
-                    if last != Some(cat) {
-                        list = list.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(7.))
-                                .pt(px(10.))
-                                .pb(px(4.))
-                                .px(px(2.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(c(hex::INK_DIM))
-                                .child(swatch(cat))
-                                .child(cat.label()),
-                        );
-                        last = Some(cat);
-                    }
-                    list = list.child(
-                        div()
-                            .id(SharedString::from(format!("node-{name}")))
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(5.))
-                            .hover(|s| s.bg(c(hex::PLUGE_RAISED)))
-                            .child(swatch(cat))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().font_weight(FontWeight::MEDIUM).child(name))
-                                    .child(div().text_color(c(hex::INK_FAINT)).child(desc)),
-                            ),
-                    );
-                }
-                list.into_any_element()
+    /// Runs one undoable edit, reporting failures in the status bar.
+    pub(crate) fn apply<R>(
+        &mut self,
+        label: &str,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut Project) -> EditResult<R>,
+    ) -> Option<R> {
+        let r = match self.doc.edit(label, f) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                self.say_error(capitalize(&e.to_string()));
+                None
             }
         };
+        cx.notify();
+        r
+    }
 
-        let footer = div()
-            .h(px(26.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(10.))
-            .border_t_1()
-            .border_color(c(hex::LINE))
-            .text_color(c(hex::INK_FAINT))
-            .child(match self.bin_tab {
-                BinTab::Media => "0 items",
-                BinTab::Nodes => "Select a clip, then click a node to add it",
+    fn after_history_change(&mut self) {
+        if let Some(id) = self.selection
+            && self.doc.project.clip(id).is_none()
+        {
+            self.selection = None;
+        }
+    }
+
+    pub(crate) fn seek(&mut self, frame: Frame) {
+        self.playhead = frame.max(0);
+        if let Some(pb) = &mut self.playback {
+            pb.origin = self.playhead;
+            pb.started = Instant::now();
+        }
+    }
+
+    fn replace_document(&mut self, doc: Document) {
+        self.doc = doc;
+        self.selection = None;
+        self.playback = None;
+        self.playhead = 0;
+        self.tl.scroll_x = 0.;
+        self.tl.fit_pending = true;
+    }
+
+    /* ---------- file actions ---------- */
+
+    /// Runs `then` now, or after the user agrees to discard unsaved changes.
+    fn guard_unsaved(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        if !self.doc.is_dirty() {
+            then(self, window, cx);
+            return;
+        }
+        let message = format!("Discard unsaved changes to “{}”?", self.doc.project.name);
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some("Your edits since the last save will be lost."),
+            &["Discard", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                this.update_in(cx, |this, window, cx| then(this, window, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn new_project(&mut self, _: &NewProject, window: &mut Window, cx: &mut Context<Self>) {
+        self.guard_unsaved(window, cx, |this, _, cx| {
+            this.replace_document(Document::new(Project::default(), None));
+            this.say("New project");
+            cx.notify();
+        });
+    }
+
+    fn open_demo(&mut self, _: &OpenDemo, window: &mut Window, cx: &mut Context<Self>) {
+        self.guard_unsaved(window, cx, |this, _, cx| {
+            this.replace_document(Document::new(demo_project(), None));
+            this.say("Opened the Signal Study demo · picture previews arrive with media import");
+            cx.notify();
+        });
+    }
+
+    fn open_project(&mut self, _: &OpenProject, window: &mut Window, cx: &mut Context<Self>) {
+        self.guard_unsaved(window, cx, |_, window, cx| {
+            let paths = cx.prompt_for_paths(PathPromptOptions {
+                files: true,
+                directories: false,
+                multiple: false,
+                prompt: Some("Open".into()),
             });
-
-        div()
-            .w(px(BIN_W))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(c(hex::PLUGE_BLACK))
-            .border_r_1()
-            .border_color(c(hex::LINE))
-            .child(header)
-            .child(filter)
-            .child(body)
-            .child(footer)
+            cx.spawn_in(window, async move |this, cx| {
+                let Ok(Ok(Some(paths))) = paths.await else {
+                    return;
+                };
+                let Some(path) = paths.into_iter().next() else {
+                    return;
+                };
+                this.update(cx, |this, cx| {
+                    this.load(&path);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        });
     }
 
-    fn viewer(&self) -> impl IntoElement {
-        let screen = div()
-            .h_full()
-            .max_w_full()
-            .aspect_ratio(16. / 9.)
-            .bg(gpui_kit::black())
-            .border_1()
-            .border_color(c(hex::LINE))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_color(c(hex::INK_FAINT))
-            .child("No picture at playhead");
-
-        let transport = div()
-            .h(px(44.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(14.))
-            .bg(c(hex::PLUGE_BLACK))
-            .border_t_1()
-            .border_color(c(hex::LINE))
-            .child(
-                div()
-                    .flex_1()
-                    .font_family(theme::MONO)
-                    .text_size(theme::TITLE)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("00:00:00:00"),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(2.))
-                    .child(icon_button(
-                        "to-start",
-                        "skip-back",
-                        "Go to start  Home",
-                        false,
-                    ))
-                    .child(icon_button(
-                        "step-back",
-                        "step-back",
-                        "Previous frame  ←",
-                        false,
-                    ))
-                    .child(
-                        icon_button("play", "play", "Play / pause  Space", false)
-                            .bg(c(hex::PLUGE_CONTROL))
-                            .text_color(c(hex::INK)),
-                    )
-                    .child(icon_button(
-                        "step-fwd",
-                        "step-forward",
-                        "Next frame  →",
-                        false,
-                    ))
-                    .child(icon_button(
-                        "to-end",
-                        "skip-forward",
-                        "Go to end  End",
-                        false,
-                    )),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .justify_end()
-                    .font_family(theme::MONO)
-                    .text_color(c(hex::INK_DIM))
-                    .child("00:00:00:00"),
-            );
-
-        div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .bg(c(hex::PLUGE_SUB))
-            .child(
-                div()
-                    .h(px(PANE_HEADER_H))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .px(px(10.))
-                    .gap(px(8.))
-                    .text_color(c(hex::INK_DIM))
-                    .child("Main Sequence")
-                    .child(div().flex_1())
-                    .child(div().font_family(theme::MONO).child("1920×1080 · 24 fps")),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .px(px(16.))
-                    .pt(px(4.))
-                    .pb(px(8.))
-                    .child(screen),
-            )
-            .child(transport)
+    pub fn load(&mut self, path: &Path) {
+        let result = std::fs::read_to_string(path)
+            .map_err(|e| e.to_string())
+            .and_then(|text| from_kdl(&text).map_err(|e| e.to_string()));
+        match result {
+            Ok(project) => {
+                self.replace_document(Document::new(project, Some(path.to_path_buf())));
+                self.say(format!("Opened {}", path.display()));
+            }
+            Err(e) => self.say_error(format!("Couldn't open {}: {e}", path.display())),
+        }
     }
 
-    fn inspector(&self) -> impl IntoElement {
-        let row = |label: &'static str, value: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .min_h(px(28.))
-                .child(
-                    div()
-                        .w(px(96.))
-                        .flex_none()
-                        .text_color(c(hex::INK_DIM))
-                        .child(label),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .font_family(theme::MONO)
-                        .text_color(c(hex::INK_DIM))
-                        .text_ellipsis()
-                        .child(value),
-                )
-        };
-        let section_head = |cat: Category, title: &'static str| {
-            div()
-                .h(px(34.))
-                .flex()
-                .items_center()
-                .gap(px(7.))
-                .px(px(12.))
-                .child(swatch(cat))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-        };
-        let hint = |text: &'static str, key: SharedString| {
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .child(text)
-                .child(kbd(key))
-        };
-
-        div()
-            .w(px(INSPECTOR_W))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(c(hex::PLUGE_BLACK))
-            .border_l_1()
-            .border_color(c(hex::LINE))
-            .child(
-                pane_header().child(
-                    div()
-                        .h(px(24.))
-                        .px(px(9.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(5.))
-                        .bg(c(hex::PLUGE_CONTROL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Inspector"),
-                ),
-            )
-            .child(
-                div()
-                    .px(px(12.))
-                    .pt(px(12.))
-                    .pb(px(10.))
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-                    .child(
-                        div()
-                            .text_size(theme::TITLE)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Main Sequence"),
-                    )
-                    .child(
-                        div()
-                            .text_color(c(hex::INK_DIM))
-                            .child("Sequence node · empty"),
-                    ),
-            )
-            .child(
-                div()
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-                    .child(section_head(Category::Composite, "Sequence"))
-                    .child(
-                        div()
-                            .px(px(12.))
-                            .pb(px(10.))
-                            .child(row("Resolution", "1920 × 1080"))
-                            .child(row("Frame rate", "24 fps"))
-                            .child(row("Duration", "00:00:00:00"))
-                            .child(row("Color space", "Rec.709 · gamma 2.4")),
-                    ),
-            )
-            .child(
-                div()
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-                    .child(section_head(Category::Output, "Output"))
-                    .child(
-                        div()
-                            .px(px(12.))
-                            .pb(px(10.))
-                            .text_color(c(hex::INK_DIM))
-                            .child("MP4 · H.264 · 1920×1080"),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(14.))
-                    .text_color(c(hex::INK_DIM))
-                    .child(hint("Select a clip to see its nodes", "click".into()))
-                    .child(hint("Peek inside the selected clip", "Tab".into()))
-                    .child(hint("See the whole sequence as a graph", "⇧ Tab".into()))
-                    .child(hint("Find any action", cmd_key("K"))),
-            )
+    fn write(&mut self, path: PathBuf) {
+        match std::fs::write(&path, to_kdl(&self.doc.project)) {
+            Ok(()) => {
+                self.say(format!("Saved {}", path.display()));
+                self.doc.mark_saved(path);
+            }
+            Err(e) => self.say_error(format!("Couldn't save {}: {e}", path.display())),
+        }
     }
 
-    fn timeline(&self) -> impl IntoElement {
-        let toolbar = div()
-            .h(px(PANE_HEADER_H))
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .px(px(8.))
-            .border_b_1()
-            .border_color(c(hex::LINE))
-            .child(
-                div()
-                    .flex()
-                    .p(px(1.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(c(hex::LINE))
-                    .bg(c(hex::PLUGE_SUB))
-                    .child(
-                        icon_button("tool-select", "mouse-pointer", "Select and move  V", false)
-                            .bg(c(hex::PLUGE_HOVER)),
-                    )
-                    .child(icon_button(
-                        "tool-blade",
-                        "scissors",
-                        "Blade: click a clip to cut  B",
-                        false,
-                    )),
-            )
-            .child(
-                icon_button(
-                    "snap",
-                    "magnet",
-                    "Snap to grid, edges and playhead  N",
-                    false,
-                )
-                .bg(c(hex::PLUGE_HOVER))
-                .text_color(c(hex::INK)),
-            )
-            .child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(c(hex::LINE)))
-            .child(ghost_button("split", "scissors", "Split", Some("S")))
-            .child(ghost_button("peek", "layers", "Peek nodes", Some("Tab")))
-            .child(ghost_button("graph", "workflow", "Graph", Some("⇧ Tab")))
-            .child(div().flex_1())
-            .child(icon_button("zoom-out", "minus", "Zoom out  −", false))
-            .child(icon_button("zoom-in", "plus", "Zoom in  =", false))
-            .child(icon_button(
-                "zoom-fit",
-                "maximize",
-                "Fit sequence  ⇧ Z",
-                false,
+    fn save(&mut self, _: &SaveProject, window: &mut Window, cx: &mut Context<Self>) {
+        match self.doc.path.clone() {
+            Some(path) => {
+                self.write(path);
+                cx.notify();
+            }
+            None => self.save_as(&SaveProjectAs, window, cx),
+        }
+    }
+
+    fn save_as(&mut self, _: &SaveProjectAs, window: &mut Window, cx: &mut Context<Self>) {
+        let dir = self
+            .doc
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+            .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let name = format!("{}.vde", self.doc.project.name);
+        let path = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(mut path))) = path.await else {
+                return;
+            };
+            if path.extension().is_none() {
+                path.set_extension("vde");
+            }
+            this.update(cx, |this, cx| {
+                this.write(path);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
+        self.guard_unsaved(window, cx, |_, _, cx| cx.quit());
+    }
+
+    fn export(&mut self, _: &Export, _: &mut Window, cx: &mut Context<Self>) {
+        let o = &self.doc.project.output;
+        let msg = format!(
+            "Export isn't built yet · the Output node is set to {} · {} · {}",
+            o.container, o.codec, o.resolution
+        );
+        self.say(msg);
+        cx.notify();
+    }
+
+    /* ---------- edit actions ---------- */
+
+    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        match self.doc.undo() {
+            Some(label) => self.say(format!("Undid {label}")),
+            None => self.say("Nothing to undo"),
+        }
+        self.after_history_change();
+        cx.notify();
+    }
+
+    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        match self.doc.redo() {
+            Some(label) => self.say(format!("Redid {label}")),
+            None => self.say("Nothing to redo"),
+        }
+        self.after_history_change();
+        cx.notify();
+    }
+
+    fn split(&mut self, _: &Split, _: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        let p = &self.doc.project;
+        let targets: Vec<ClipId> = match self.selection.and_then(|id| p.clip(id)) {
+            Some(c) if t > c.start && t < c.end() => vec![c.id],
+            _ => p
+                .sequence
+                .clips
+                .iter()
+                .filter(|c| t > c.start && t < c.end())
+                .filter(|c| p.track(c.track).is_some_and(|tr| !tr.locked))
+                .map(|c| c.id)
+                .collect(),
+        };
+        if targets.is_empty() {
+            self.say("No clip under the playhead to split");
+            cx.notify();
+            return;
+        }
+        let n = targets.len();
+        let done = self.apply("split", cx, |p| {
+            targets
+                .iter()
+                .try_for_each(|id| p.split(*id, t).map(|_| ()))
+        });
+        if done.is_some() {
+            let what = if n == 1 {
+                "1 clip".to_string()
+            } else {
+                format!("{n} clips")
+            };
+            self.say(format!(
+                "Split {what} at {} · {} to undo",
+                self.tc(t),
+                cmd_key("Z")
             ));
-
-        let heads = div()
-            .w(px(TRACK_HEADS_W))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .border_r_1()
-            .border_color(c(hex::LINE))
-            .child(
-                div()
-                    .h(px(RULER_H))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .px(px(10.))
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-                    .font_family(theme::MONO)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("00:00:00:00"),
-            )
-            .children(TRACKS.iter().map(|t| {
-                div()
-                    .h(px(t.height))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .pl(px(10.))
-                    .pr(px(4.))
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-                    .child(
-                        div()
-                            .w(px(22.))
-                            .font_family(theme::MONO)
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(t.id),
-                    )
-                    .child(div().flex_1().text_ellipsis().child(t.name))
-                    .child(icon_button(
-                        &format!("{}-enable", t.id),
-                        if t.audio { "volume-2" } else { "eye" },
-                        if t.audio {
-                            "Mute track  M"
-                        } else {
-                            "Hide track  M"
-                        },
-                        false,
-                    ))
-                    .child(
-                        icon_button(&format!("{}-lock", t.id), "lock-open", "Lock track", false)
-                            .text_color(c(hex::INK_FAINT)),
-                    )
-            }));
-
-        let ticks = (0..=180).filter(|s| s % 5 == 0).map(|sec| {
-            let x = sec as f32 * PX_PER_SEC;
-            div()
-                .absolute()
-                .left(px(x))
-                .top_0()
-                .h_full()
-                .child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .bottom_0()
-                        .w(px(1.))
-                        .h(px(14.))
-                        .bg(c(0x5a5a62)),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(4.))
-                        .top(px(3.))
-                        .font_family(theme::MONO)
-                        .text_color(c(hex::INK_DIM))
-                        .whitespace_nowrap()
-                        .child(format!("{}:{:02}", sec / 60, sec % 60)),
-                )
-        });
-        let minor = (0..=180).filter(|s| s % 5 != 0).map(|sec| {
-            div()
-                .absolute()
-                .left(px(sec as f32 * PX_PER_SEC))
-                .bottom_0()
-                .w(px(1.))
-                .h(px(7.))
-                .bg(c(0x34343a))
-        });
-        let ruler = div()
-            .h(px(RULER_H))
-            .flex_none()
-            .relative()
-            .overflow_hidden()
-            .border_b_1()
-            .border_color(c(hex::LINE))
-            .children(minor)
-            .children(ticks)
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top_0()
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .px(px(6.))
-                    .bg(c(hex::PLUGE_BLACK))
-                    .border_r_1()
-                    .border_color(c(hex::LINE))
-                    .font_family(theme::MONO)
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("00:00:00:00"),
-            );
-
-        let lanes = div()
-            .flex_1()
-            .relative()
-            .children(TRACKS.iter().map(|t| {
-                div()
-                    .h(px(t.height))
-                    .flex_none()
-                    .border_b_1()
-                    .border_color(c(hex::LINE))
-            }))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(4.))
-                    .text_color(c(hex::INK_DIM))
-                    .child(
-                        div()
-                            .text_color(c(hex::INK))
-                            .font_weight(FontWeight::MEDIUM)
-                            .child("The timeline is empty"),
-                    )
-                    .child(format!(
-                        "Drag media here from the bin, or press {} to import",
-                        cmd_key("I")
-                    )),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left_0()
-                    .w(px(1.))
-                    .bg(c(hex::BONE)),
-            );
-
-        div()
-            .h(px(TIMELINE_H))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(c(hex::PLUGE_BLACK))
-            .child(toolbar)
-            .child(
-                div().flex_1().min_h_0().flex().child(heads).child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden()
-                        .child(ruler)
-                        .child(lanes),
-                ),
-            )
+        }
     }
 
-    fn status_bar(&self) -> impl IntoElement {
-        let item = |icon_name: &'static str, label: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .child(icon(icon_name, px(14.), c(hex::INK_DIM)))
-                .child(label)
+    fn delete(&mut self, ripple: bool, cx: &mut Context<Self>) {
+        let Some(id) = self.selection else {
+            self.say("Select a clip to delete");
+            cx.notify();
+            return;
         };
-        div()
-            .h(px(STATUS_H))
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .px(px(10.))
-            .bg(c(hex::PLUGE_BLACK))
-            .border_t_1()
-            .border_color(c(hex::LINE))
-            .text_color(c(hex::INK_DIM))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child("New project · import media to start")
-                    .child(kbd(cmd_key("I")))
-                    .child("· clips are made of nodes, press")
-                    .child(kbd("Tab".into()))
-                    .child("on a clip to peek inside"),
-            )
-            .child(item("magnet", "Snap · 1 s grid"))
-            .child(item("workflow", "2 nodes"))
-            .child(div().font_family(theme::MONO).child("1920×1080 · 24 fps"))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(icon("keyboard", px(14.), c(hex::INK_DIM)))
-                    .child("Shortcuts")
-                    .child(kbd("?".into())),
-            )
+        let p = &self.doc.project;
+        let name = p.clip(id).map(|c| p.clip_name(c)).unwrap_or_default();
+        let label = if ripple { "ripple delete" } else { "delete" };
+        let done = self.apply(label, cx, |p| {
+            if ripple {
+                p.ripple_delete(id)
+            } else {
+                p.delete_clip(id)
+            }
+        });
+        if done.is_some() {
+            self.selection = None;
+            let verb = if ripple { "Ripple deleted" } else { "Deleted" };
+            self.say(format!("{verb} {name} · {} to undo", cmd_key("Z")));
+        }
+    }
+
+    fn delete_clip(&mut self, _: &DeleteClip, _: &mut Window, cx: &mut Context<Self>) {
+        self.delete(false, cx);
+    }
+
+    fn ripple_delete(&mut self, _: &RippleDelete, _: &mut Window, cx: &mut Context<Self>) {
+        self.delete(true, cx);
+    }
+
+    fn deselect(&mut self, _: &Deselect, _: &mut Window, cx: &mut Context<Self>) {
+        if self.tl.drag.is_some() {
+            self.cancel_drag();
+        } else if self.tool == Tool::Blade {
+            self.tool = Tool::Select;
+        } else {
+            self.selection = None;
+        }
+        cx.notify();
+    }
+
+    fn select_tool(&mut self, _: &SelectTool, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_tool(Tool::Select, cx);
+    }
+
+    fn blade_tool(&mut self, _: &BladeTool, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_tool(Tool::Blade, cx);
+    }
+
+    pub(crate) fn set_tool(&mut self, tool: Tool, cx: &mut Context<Self>) {
+        self.tool = tool;
+        self.say(match tool {
+            Tool::Select => "Select tool",
+            Tool::Blade => "Blade · click a clip to cut it · V or Esc to go back",
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_snap(&mut self, _: &ToggleSnap, _: &mut Window, cx: &mut Context<Self>) {
+        self.snap = !self.snap;
+        self.say(if self.snap {
+            "Snapping on · 1 s grid, clip edges, playhead"
+        } else {
+            "Snapping off"
+        });
+        cx.notify();
+    }
+
+    fn toggle_track(&mut self, _: &ToggleTrack, _: &mut Window, cx: &mut Context<Self>) {
+        let track = self
+            .selection
+            .and_then(|id| self.doc.project.clip(id))
+            .map(|c| c.track);
+        match track {
+            Some(track) => self.toggle_track_enabled(track, cx),
+            None => {
+                self.say("Select a clip to mute or hide its track");
+                cx.notify();
+            }
+        }
+    }
+
+    pub(crate) fn toggle_track_enabled(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        let Some(t) = self.doc.project.track(track) else {
+            return;
+        };
+        let (enabled, label) = (!t.enabled, t.label.clone());
+        let edit = if enabled {
+            "enable track"
+        } else {
+            "disable track"
+        };
+        if self
+            .apply(edit, cx, |p| p.set_track_enabled(track, enabled))
+            .is_some()
+        {
+            self.say(format!("{label} {}", if enabled { "on" } else { "off" }));
+        }
+    }
+
+    pub(crate) fn toggle_track_locked(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        let Some(t) = self.doc.project.track(track) else {
+            return;
+        };
+        let (locked, label) = (!t.locked, t.label.clone());
+        let edit = if locked { "lock track" } else { "unlock track" };
+        if self
+            .apply(edit, cx, |p| p.set_track_locked(track, locked))
+            .is_some()
+        {
+            self.say(format!(
+                "{label} {}",
+                if locked { "locked" } else { "unlocked" }
+            ));
+        }
+    }
+
+    /* ---------- view actions ---------- */
+
+    pub(crate) fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_around_playhead(1.4);
+        cx.notify();
+    }
+
+    pub(crate) fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_around_playhead(1. / 1.4);
+        cx.notify();
+    }
+
+    pub(crate) fn zoom_fit(&mut self, _: &ZoomToFit, _: &mut Window, cx: &mut Context<Self>) {
+        self.tl.fit_pending = true;
+        cx.notify();
+    }
+
+    /* ---------- transport ---------- */
+
+    pub(crate) fn is_playing(&self) -> bool {
+        self.playback.is_some()
+    }
+
+    fn start_playback(&mut self, speed: f64) {
+        let end = self.doc.project.end();
+        if speed > 0. && self.playhead >= end {
+            self.playhead = 0;
+        }
+        self.playback = Some(Playback {
+            origin: self.playhead,
+            started: Instant::now(),
+            speed,
+        });
+    }
+
+    pub(crate) fn toggle_play(&mut self, _: &TogglePlay, _: &mut Window, cx: &mut Context<Self>) {
+        if self.playback.take().is_none() {
+            self.start_playback(1.);
+        }
+        cx.notify();
+    }
+
+    fn shuttle(&mut self, dir: f64) {
+        let speed = match &self.playback {
+            Some(pb) if pb.speed.signum() == dir => (pb.speed * 2.).clamp(-8., 8.),
+            _ => dir,
+        };
+        self.start_playback(speed);
+    }
+
+    fn shuttle_forward(&mut self, _: &ShuttleForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.shuttle(1.);
+        cx.notify();
+    }
+
+    fn shuttle_backward(&mut self, _: &ShuttleBackward, _: &mut Window, cx: &mut Context<Self>) {
+        self.shuttle(-1.);
+        cx.notify();
+    }
+
+    fn shuttle_stop(&mut self, _: &ShuttleStop, _: &mut Window, cx: &mut Context<Self>) {
+        self.playback = None;
+        cx.notify();
+    }
+
+    fn nudge(&mut self, frames: Frame, cx: &mut Context<Self>) {
+        self.playback = None;
+        self.seek(self.playhead + frames);
+        self.follow_playhead();
+        cx.notify();
+    }
+
+    pub(crate) fn step_back(&mut self, _: &StepBack, _: &mut Window, cx: &mut Context<Self>) {
+        self.nudge(-1, cx);
+    }
+
+    pub(crate) fn step_forward(&mut self, _: &StepForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.nudge(1, cx);
+    }
+
+    fn second_back(&mut self, _: &SecondBack, _: &mut Window, cx: &mut Context<Self>) {
+        let n = self.fps().nominal();
+        self.nudge(-n, cx);
+    }
+
+    fn second_forward(&mut self, _: &SecondForward, _: &mut Window, cx: &mut Context<Self>) {
+        let n = self.fps().nominal();
+        self.nudge(n, cx);
+    }
+
+    fn prev_edit(&mut self, _: &PrevEdit, _: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        let points = self.doc.project.edit_points();
+        let to = points.into_iter().rev().find(|&f| f < t).unwrap_or(0);
+        self.nudge(to - t, cx);
+    }
+
+    fn next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        let end = self.doc.project.end();
+        let points = self.doc.project.edit_points();
+        let to = points.into_iter().find(|&f| f > t).unwrap_or(end);
+        self.nudge(to - t, cx);
+    }
+
+    pub(crate) fn go_start(&mut self, _: &GoToStart, _: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        self.nudge(-t, cx);
+    }
+
+    pub(crate) fn go_end(&mut self, _: &GoToEnd, _: &mut Window, cx: &mut Context<Self>) {
+        let t = self.playhead;
+        let end = self.doc.project.end();
+        self.nudge(end - t, cx);
+    }
+
+    /// Advances the playhead from the wall clock while playing.
+    fn tick_playback(&mut self, window: &mut Window) {
+        let Some(pb) = &self.playback else {
+            return;
+        };
+        let elapsed = pb.started.elapsed().as_secs_f64();
+        let frame = pb.origin + (elapsed * self.fps().as_f64() * pb.speed).floor() as Frame;
+        let end = self.doc.project.end();
+        if frame >= end && pb.speed > 0. {
+            self.playhead = end;
+            self.playback = None;
+        } else if frame <= 0 && pb.speed < 0. {
+            self.playhead = 0;
+            self.playback = None;
+        } else {
+            self.playhead = frame;
+            window.request_animation_frame();
+        }
+        self.follow_playhead();
+    }
+
+    fn update_title(&mut self, window: &mut Window) {
+        let dirty = if self.doc.is_dirty() { " •" } else { "" };
+        let title = format!("{}{dirty} — videode", self.doc.project.name);
+        if title != self.title {
+            window.set_window_title(&title);
+            self.title = title;
+        }
+    }
+}
+
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
     }
 }
 
 impl Render for Workspace {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.tick_playback(window);
+        self.update_title(window);
+
         div()
             .size_full()
             .flex()
@@ -879,15 +652,49 @@ impl Render for Workspace {
             .font_family(theme::FONT)
             .text_size(theme::TEXT)
             .line_height(relative(1.45))
-            .child(self.top_bar())
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::new_project))
+            .on_action(cx.listener(Self::open_project))
+            .on_action(cx.listener(Self::open_demo))
+            .on_action(cx.listener(Self::save))
+            .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(Self::quit))
+            .on_action(cx.listener(Self::export))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(Self::split))
+            .on_action(cx.listener(Self::delete_clip))
+            .on_action(cx.listener(Self::ripple_delete))
+            .on_action(cx.listener(Self::deselect))
+            .on_action(cx.listener(Self::select_tool))
+            .on_action(cx.listener(Self::blade_tool))
+            .on_action(cx.listener(Self::toggle_snap))
+            .on_action(cx.listener(Self::toggle_track))
+            .on_action(cx.listener(Self::zoom_in))
+            .on_action(cx.listener(Self::zoom_out))
+            .on_action(cx.listener(Self::zoom_fit))
+            .on_action(cx.listener(Self::toggle_play))
+            .on_action(cx.listener(Self::shuttle_forward))
+            .on_action(cx.listener(Self::shuttle_backward))
+            .on_action(cx.listener(Self::shuttle_stop))
+            .on_action(cx.listener(Self::step_back))
+            .on_action(cx.listener(Self::step_forward))
+            .on_action(cx.listener(Self::second_back))
+            .on_action(cx.listener(Self::second_forward))
+            .on_action(cx.listener(Self::prev_edit))
+            .on_action(cx.listener(Self::next_edit))
+            .on_action(cx.listener(Self::go_start))
+            .on_action(cx.listener(Self::go_end))
+            .child(self.render_top_bar(cx))
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .child(self.bin(cx))
-                    .child(self.viewer())
-                    .child(self.inspector()),
+                    .child(self.render_bin(cx))
+                    .child(self.render_viewer(cx))
+                    .child(self.render_inspector()),
             )
             .child(
                 div()
@@ -897,151 +704,7 @@ impl Render for Workspace {
                     .border_t_1()
                     .border_color(c(hex::LINE)),
             )
-            .child(self.timeline())
-            .child(self.status_bar())
+            .child(self.render_timeline(window, cx))
+            .child(self.render_status_bar())
     }
-}
-
-/* ---------- small shared pieces ---------- */
-
-fn cmd_key(key: &str) -> SharedString {
-    if cfg!(target_os = "macos") {
-        format!("⌘ {key}").into()
-    } else {
-        format!("Ctrl {key}").into()
-    }
-}
-
-fn icon(name: &str, size: gpui_kit::Pixels, color: Hsla) -> Icon {
-    Icon::empty()
-        .path(SharedString::from(format!("icons/{name}.svg")))
-        .size(size)
-        .text_color(color)
-}
-
-fn swatch(cat: Category) -> impl IntoElement {
-    div()
-        .w(px(8.))
-        .h(px(8.))
-        .flex_none()
-        .rounded(px(2.))
-        .bg(cat.color())
-}
-
-fn kbd(label: SharedString) -> impl IntoElement {
-    div()
-        .flex_none()
-        .min_w(px(18.))
-        .h(px(18.))
-        .px(px(4.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(4.))
-        .border_1()
-        .border_b(px(2.))
-        .border_color(c(hex::LINE_STRONG))
-        .bg(c(hex::PLUGE_BLACK))
-        .font_family(theme::MONO)
-        .text_size(theme::KEYCAP)
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(c(hex::INK_DIM))
-        .child(label)
-}
-
-fn pane_header() -> gpui_kit::Div {
-    div()
-        .h(px(PANE_HEADER_H))
-        .flex_none()
-        .flex()
-        .items_center()
-        .gap(px(2.))
-        .px(px(6.))
-        .border_b_1()
-        .border_color(c(hex::LINE))
-}
-
-fn icon_button(
-    id: &str,
-    icon_name: &str,
-    tip: &str,
-    disabled: bool,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let tip = SharedString::from(tip.to_string());
-    div()
-        .id(SharedString::from(id.to_string()))
-        .w(px(28.))
-        .h(px(26.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(5.))
-        .text_color(c(hex::INK_DIM))
-        .when(disabled, |d| d.opacity(0.35))
-        .when(!disabled, |d| {
-            d.hover(|s| s.bg(c(hex::PLUGE_CONTROL)).text_color(c(hex::INK)))
-        })
-        .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
-        .child(
-            Icon::empty()
-                .path(SharedString::from(format!("icons/{icon_name}.svg")))
-                .size(px(16.)),
-        )
-}
-
-fn button(
-    id: &str,
-    icon_name: Option<&str>,
-    label: &'static str,
-    primary: bool,
-) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let (bg, fg, border) = if primary {
-        (hex::BONE, hex::PLUGE_SUB, hex::BONE)
-    } else {
-        (hex::PLUGE_RAISED, hex::INK, hex::LINE_STRONG)
-    };
-    div()
-        .id(SharedString::from(id.to_string()))
-        .h(px(26.))
-        .px(px(10.))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .rounded(px(5.))
-        .border_1()
-        .border_color(c(border))
-        .bg(c(bg))
-        .text_color(c(fg))
-        .when(primary, |d| d.font_weight(FontWeight::MEDIUM))
-        .hover(move |s| {
-            s.bg(c(if primary {
-                0xfffaf0
-            } else {
-                hex::PLUGE_CONTROL
-            }))
-        })
-        .when_some(icon_name, |d, name| d.child(icon(name, px(16.), c(fg))))
-        .child(label)
-}
-
-fn ghost_button(
-    id: &str,
-    icon_name: &str,
-    label: &'static str,
-    key: Option<&'static str>,
-) -> impl IntoElement {
-    div()
-        .id(SharedString::from(id.to_string()))
-        .h(px(26.))
-        .px(px(8.))
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .rounded(px(5.))
-        .text_color(c(hex::INK_DIM))
-        .hover(|s| s.bg(c(hex::PLUGE_CONTROL)).text_color(c(hex::INK)))
-        .child(icon(icon_name, px(16.), c(hex::INK_DIM)))
-        .child(label)
-        .when_some(key, |d, k| d.child(kbd(k.into())))
 }
