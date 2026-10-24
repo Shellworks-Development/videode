@@ -1,0 +1,1041 @@
+//! The panels around the timeline: top bar with menus, media bin and node
+//! library, viewer and transport, inspector, and status bar.
+
+use gpui_kit::component::Sizable as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu};
+use gpui_kit::prelude::*;
+use gpui_kit::{AnyElement, Context, FocusHandle, FontWeight, SharedString, div, px};
+use videode_core::{Clip, ClipKind, MediaId, MediaKind, NodeKind, time};
+
+use crate::actions::*;
+use crate::theme::{self, ALL_CATEGORIES, Category, CategoryExt, c, hex};
+use crate::ui::{button, cmd_key, field_row, icon, icon_button, kbd, pane_header, swatch, tip};
+use crate::workspace::{BinTab, Workspace};
+
+const TOP_BAR_H: f32 = 38.;
+const STATUS_H: f32 = 26.;
+const BIN_W: f32 = 264.;
+const INSPECTOR_W: f32 = 304.;
+
+type MenuBuilder = fn(PopupMenu, &Workspace) -> PopupMenu;
+
+fn file_menu(m: PopupMenu, _: &Workspace) -> PopupMenu {
+    m.menu("New project", Box::new(NewProject))
+        .menu("Open…", Box::new(OpenProject))
+        .menu("Open demo project", Box::new(OpenDemo))
+        .separator()
+        .menu("Save", Box::new(SaveProject))
+        .menu("Save as…", Box::new(SaveProjectAs))
+        .separator()
+        .menu("Export…", Box::new(Export))
+        .separator()
+        .menu("Quit", Box::new(Quit))
+}
+
+fn edit_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
+    let undo = ws.doc.undo_label().map(|l| format!("Undo {l}"));
+    let redo = ws.doc.redo_label().map(|l| format!("Redo {l}"));
+    m.menu_with_disabled(
+        undo.clone().unwrap_or("Undo".into()),
+        Box::new(Undo),
+        undo.is_none(),
+    )
+    .menu_with_disabled(
+        redo.clone().unwrap_or("Redo".into()),
+        Box::new(Redo),
+        redo.is_none(),
+    )
+    .separator()
+    .menu("Deselect", Box::new(Deselect))
+}
+
+fn clip_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
+    let none = ws.selection.is_none();
+    m.menu("Split at playhead", Box::new(Split))
+        .menu_with_disabled("Delete", Box::new(DeleteClip), none)
+        .menu_with_disabled("Ripple delete", Box::new(RippleDelete), none)
+        .separator()
+        .menu_with_disabled("Mute or hide track", Box::new(ToggleTrack), none)
+}
+
+fn view_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
+    m.menu_with_check(
+        "Select tool",
+        ws.tool == crate::workspace::Tool::Select,
+        Box::new(SelectTool),
+    )
+    .menu_with_check(
+        "Blade tool",
+        ws.tool == crate::workspace::Tool::Blade,
+        Box::new(BladeTool),
+    )
+    .menu_with_check("Snapping", ws.snap, Box::new(ToggleSnap))
+    .separator()
+    .menu("Zoom in", Box::new(ZoomIn))
+    .menu("Zoom out", Box::new(ZoomOut))
+    .menu("Zoom to fit", Box::new(ZoomToFit))
+}
+
+fn playback_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
+    m.menu(
+        if ws.is_playing() { "Pause" } else { "Play" },
+        Box::new(TogglePlay),
+    )
+    .menu("Play backward / faster", Box::new(ShuttleBackward))
+    .menu("Stop", Box::new(ShuttleStop))
+    .menu("Play forward / faster", Box::new(ShuttleForward))
+    .separator()
+    .menu("Previous frame", Box::new(StepBack))
+    .menu("Next frame", Box::new(StepForward))
+    .menu("Back one second", Box::new(SecondBack))
+    .menu("Forward one second", Box::new(SecondForward))
+    .separator()
+    .menu("Previous edit point", Box::new(PrevEdit))
+    .menu("Next edit point", Box::new(NextEdit))
+    .menu("Go to start", Box::new(GoToStart))
+    .menu("Go to end", Box::new(GoToEnd))
+}
+
+impl Workspace {
+    fn menu(
+        &self,
+        name: &'static str,
+        build: MenuBuilder,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let this = cx.entity().downgrade();
+        let focus: FocusHandle = self.focus.clone();
+        Button::new(SharedString::from(format!("menu-{name}")))
+            .label(name)
+            .ghost()
+            .small()
+            .dropdown_menu(move |menu, _, cx| {
+                let menu = menu.action_context(focus.clone()).min_w(px(220.));
+                match this.upgrade() {
+                    Some(ws) => build(menu, ws.read(cx)),
+                    None => menu,
+                }
+            })
+    }
+
+    pub(crate) fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let logo = div().flex().gap(px(2.)).mr(px(6.)).children(
+            ALL_CATEGORIES.map(|cat| div().w(px(3.)).h(px(15.)).rounded(px(1.)).bg(cat.color())),
+        );
+
+        let p = self.project();
+        let crumbs = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .ml(px(14.))
+            .flex_shrink_0()
+            .whitespace_nowrap()
+            .text_color(c(hex::INK_DIM))
+            .child(SharedString::from(p.name.clone()))
+            .when(self.doc.is_dirty(), |d| {
+                d.child(
+                    div()
+                        .id("dirty")
+                        .w(px(6.))
+                        .h(px(6.))
+                        .rounded_full()
+                        .bg(c(hex::INK_DIM))
+                        .tooltip(tip("Unsaved changes", Some(cmd_key("S")))),
+                )
+            })
+            .child(icon("chevron-right", px(12.), c(hex::INK_FAINT)))
+            .child(
+                div()
+                    .text_color(c(hex::INK))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(SharedString::from(format!("{} Sequence", p.sequence.name))),
+            );
+
+        let command = div()
+            .id("command-palette")
+            .w(px(340.))
+            .min_w(px(150.))
+            .flex_shrink(1.)
+            .h(px(26.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(8.))
+            .pr(px(4.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(c(hex::LINE_STRONG))
+            .bg(c(hex::PLUGE_SUB))
+            .text_color(c(hex::INK_DIM))
+            .cursor_pointer()
+            .hover(|s| s.text_color(c(hex::INK)))
+            .tooltip(tip("Every action, node and clip", Some(cmd_key("K"))))
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.say(
+                    "The command palette arrives with the node views (M2) · use the menus for now",
+                );
+                cx.notify();
+            }))
+            .child(icon("search", px(16.), c(hex::INK_DIM)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child("Search actions, nodes, clips…"),
+            )
+            .child(kbd(cmd_key("K")));
+
+        let undo = self.doc.undo_label().map(|l| format!("Undo {l}"));
+        let redo = self.doc.redo_label().map(|l| format!("Redo {l}"));
+
+        div()
+            .h(px(TOP_BAR_H))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .pl(px(12.))
+            .pr(px(10.))
+            .bg(c(hex::PLUGE_BLACK))
+            .border_b_1()
+            .border_color(c(hex::LINE))
+            .child(logo)
+            .child(
+                div()
+                    .mr(px(8.))
+                    .text_size(theme::TITLE)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("videode"),
+            )
+            .child(
+                div()
+                    .flex()
+                    .child(self.menu("File", file_menu, cx))
+                    .child(self.menu("Edit", edit_menu, cx))
+                    .child(self.menu("Clip", clip_menu, cx))
+                    .child(self.menu("View", view_menu, cx))
+                    .child(self.menu("Playback", playback_menu, cx)),
+            )
+            .child(crumbs)
+            .child(
+                div()
+                    .ml_auto()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(command)
+                    .child(
+                        icon_button("undo", "undo", false, undo.is_none())
+                            .tooltip(tip(
+                                undo.unwrap_or("Nothing to undo".into()),
+                                Some(cmd_key("Z")),
+                            ))
+                            .on_click(|_, w, cx| w.dispatch_action(Box::new(Undo), cx)),
+                    )
+                    .child(
+                        icon_button("redo", "redo", false, redo.is_none())
+                            .tooltip(tip(
+                                redo.unwrap_or("Nothing to redo".into()),
+                                Some(cmd_key("⇧ Z")),
+                            ))
+                            .on_click(|_, w, cx| w.dispatch_action(Box::new(Redo), cx)),
+                    )
+                    .child(
+                        button("export", Some("upload"), "Export", true)
+                            .tooltip(tip("Open the Output node", Some(cmd_key("E"))))
+                            .on_click(|_, w, cx| w.dispatch_action(Box::new(Export), cx)),
+                    ),
+            )
+    }
+
+    /* ---------- bin ---------- */
+
+    fn add_media_at_playhead(&mut self, media: MediaId, cx: &mut Context<Self>) {
+        let at = self.playhead;
+        if let Some(id) = self.apply("add clip", cx, |p| p.add_media_clip(media, None, at)) {
+            self.selection = Some(id);
+            let p = self.project();
+            if let Some(clip) = p.clip(id) {
+                let track = p
+                    .track(clip.track)
+                    .map(|t| t.label.clone())
+                    .unwrap_or_default();
+                let msg = format!(
+                    "Added {} to {track} at {}",
+                    p.clip_name(clip),
+                    self.tc(clip.start)
+                );
+                self.say(msg);
+            }
+        }
+    }
+
+    fn add_node_to_selection(&mut self, kind: NodeKind, cx: &mut Context<Self>) {
+        let Some(clip) = self.selection else {
+            self.say(format!(
+                "Select a clip first, then click {} to add it",
+                kind.name()
+            ));
+            cx.notify();
+            return;
+        };
+        if self
+            .apply("add node", cx, |p| p.add_node(clip, kind))
+            .is_some()
+        {
+            self.say(format!("Added {} · {} to undo", kind.name(), cmd_key("Z")));
+        }
+    }
+
+    pub(crate) fn render_bin(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let tab = |id: &'static str,
+                   label: &'static str,
+                   which: BinTab,
+                   this: &Self,
+                   cx: &mut Context<Self>| {
+            let selected = this.bin_tab == which;
+            div()
+                .id(id)
+                .h(px(24.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .rounded(px(5.))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .text_color(c(if selected { hex::INK } else { hex::INK_DIM }))
+                .when(selected, |d| d.bg(c(hex::PLUGE_CONTROL)))
+                .hover(|s| s.text_color(c(hex::INK)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.bin_tab = which;
+                    cx.notify();
+                }))
+                .child(label)
+        };
+
+        let header = pane_header()
+            .child(tab("bin-media", "Media", BinTab::Media, self, cx))
+            .child(tab("bin-nodes", "Nodes", BinTab::Nodes, self, cx))
+            .child(div().flex_1())
+            .child(
+                icon_button("import", "import", false, false)
+                    .tooltip(tip("Import media (arrives in M3)", None))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.say(
+                            "Media import arrives in M3 · open the demo project to try editing",
+                        );
+                        cx.notify();
+                    })),
+            );
+
+        let (body, footer): (AnyElement, String) = match self.bin_tab {
+            BinTab::Media => (self.render_media_list(cx), self.media_footer()),
+            BinTab::Nodes => (self.render_node_library(cx), self.nodes_footer()),
+        };
+
+        div()
+            .w(px(BIN_W))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .bg(c(hex::PLUGE_BLACK))
+            .border_r_1()
+            .border_color(c(hex::LINE))
+            .child(header)
+            .child(
+                div()
+                    .id("bin-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(body),
+            )
+            .child(
+                div()
+                    .h(px(26.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .px(px(10.))
+                    .border_t_1()
+                    .border_color(c(hex::LINE))
+                    .text_color(c(hex::INK_FAINT))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(footer),
+            )
+    }
+
+    fn media_footer(&self) -> String {
+        match self.project().media.len() {
+            1 => "1 item · double-click to add at the playhead".into(),
+            n => format!("{n} items · double-click to add at the playhead"),
+        }
+    }
+
+    fn nodes_footer(&self) -> String {
+        match self.selection.and_then(|id| self.project().clip(id)) {
+            Some(clip) => format!(
+                "Click a node to add it to {}",
+                self.project().clip_name(clip)
+            ),
+            None => "Select a clip, then click a node to add it".into(),
+        }
+    }
+
+    fn render_media_list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = self.project();
+        if p.media.is_empty() {
+            return div()
+                .h_full()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(10.))
+                .px(px(16.))
+                .py(px(40.))
+                .text_color(c(hex::INK_DIM))
+                .child(icon("film", px(24.), c(hex::INK_FAINT)))
+                .child(div().text_color(c(hex::INK)).font_weight(FontWeight::MEDIUM).child("No media yet"))
+                .child(div().text_center().child("Import arrives with media decoding. Until then, open the demo project to edit."))
+                .child(
+                    button("bin-demo", Some("film"), "Open demo project", false)
+                        .on_click(|_, w, cx| w.dispatch_action(Box::new(OpenDemo), cx)),
+                )
+                .into_any_element();
+        }
+        let in_use = |id: MediaId| {
+            p.sequence
+                .clips
+                .iter()
+                .filter(|c| c.media == Some(id))
+                .count()
+        };
+        let fps = p.sequence.fps;
+        div()
+            .flex()
+            .flex_col()
+            .p(px(6.))
+            .gap(px(1.))
+            .children(p.media.iter().map(|m| {
+                let id = m.id;
+                let kind_icon = match m.kind {
+                    MediaKind::Audio => "volume-2",
+                    MediaKind::Video | MediaKind::Image => "film",
+                };
+                let length = m
+                    .duration
+                    .map(|d| time::timecode_short(d, fps))
+                    .unwrap_or("still".into());
+                let uses = in_use(id);
+                div()
+                    .id(SharedString::from(format!("media-{}", id.0)))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(8.))
+                    .py(px(5.))
+                    .rounded(px(5.))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(c(hex::PLUGE_RAISED)))
+                    .tooltip(tip(
+                        if m.offline {
+                            format!("{} · file not found", m.path.display())
+                        } else {
+                            format!("{} · double-click to add at the playhead", m.path.display())
+                        },
+                        None,
+                    ))
+                    .on_click(cx.listener(move |this, e: &gpui_kit::ClickEvent, _, cx| {
+                        if e.click_count() >= 2 {
+                            this.add_media_at_playhead(id, cx);
+                        }
+                    }))
+                    .child(
+                        div()
+                            .w(px(40.))
+                            .h(px(26.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(c(if m.offline { hex::WARN } else { hex::LINE }))
+                            .when(m.offline, |d| d.border_dashed())
+                            .bg(c(hex::PLUGE_SUB))
+                            .child(icon(kind_icon, px(14.), c(hex::INK_FAINT))),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .when(m.offline, |d| d.text_color(c(hex::WARN)))
+                                    .child(m.file_name()),
+                            )
+                            .child(
+                                div()
+                                    .whitespace_nowrap()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .text_color(c(hex::INK_FAINT))
+                                    .child(if m.offline {
+                                        "offline".to_string()
+                                    } else {
+                                        format!("{} · {}", m.codec, m.format)
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .items_end()
+                            .font_family(theme::MONO)
+                            .text_color(c(hex::INK_DIM))
+                            .child(length)
+                            .child(div().text_color(c(hex::INK_FAINT)).child(if uses == 0 {
+                                String::new()
+                            } else {
+                                format!("×{uses}")
+                            })),
+                    )
+            }))
+            .into_any_element()
+    }
+
+    fn render_node_library(&self, cx: &mut Context<Self>) -> AnyElement {
+        let target = self
+            .selection
+            .and_then(|id| self.project().clip(id))
+            .map(|c| c.kind);
+        let mut list = div().flex().flex_col().px(px(8.)).pb(px(8.));
+        let mut last: Option<Category> = None;
+        for kind in NodeKind::ALL.into_iter().filter(|k| !k.is_generator()) {
+            let cat = kind.category();
+            if last != Some(cat) {
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(7.))
+                        .pt(px(10.))
+                        .pb(px(4.))
+                        .px(px(2.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(c(hex::INK_DIM))
+                        .child(swatch(cat))
+                        .child(cat.label()),
+                );
+                last = Some(cat);
+            }
+            let unusable = target.is_some_and(|k| !kind.applies_to(k));
+            list = list.child(
+                div()
+                    .id(SharedString::from(format!("node-{}", kind.ident())))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(5.))
+                    .when(unusable, |d| d.opacity(0.4))
+                    .when(!unusable, |d| {
+                        d.cursor_pointer().hover(|s| s.bg(c(hex::PLUGE_RAISED)))
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.add_node_to_selection(kind, cx)),
+                    )
+                    .child(swatch(cat))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(kind.name()))
+                            .child(
+                                div()
+                                    .text_color(c(hex::INK_FAINT))
+                                    .child(kind.description()),
+                            ),
+                    ),
+            );
+        }
+        list.into_any_element()
+    }
+
+    /* ---------- viewer ---------- */
+
+    /// The topmost enabled video clip under the playhead.
+    fn picture_at_playhead(&self) -> Option<&Clip> {
+        let p = self.project();
+        p.sequence
+            .tracks
+            .iter()
+            .filter(|t| t.enabled && t.kind == videode_core::StreamKind::Video)
+            .find_map(|t| p.clip_at(t.id, self.playhead))
+    }
+
+    pub(crate) fn render_viewer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let p = self.project();
+        let seq = &p.sequence;
+        let picture: AnyElement = match self.picture_at_playhead() {
+            None => div()
+                .text_color(c(hex::INK_FAINT))
+                .child("No picture at playhead")
+                .into_any_element(),
+            Some(clip) => {
+                let offline = clip
+                    .media
+                    .and_then(|m| p.media(m))
+                    .is_some_and(|m| m.offline);
+                let (title, sub) = match clip.kind {
+                    ClipKind::Text => (
+                        p.clip_name(clip),
+                        "Text · rendering arrives with the compositor".to_string(),
+                    ),
+                    _ if offline => (p.clip_name(clip), "Media offline".to_string()),
+                    _ => (
+                        p.clip_name(clip),
+                        "Picture preview arrives with media decoding (M3)".to_string(),
+                    ),
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .text_size(theme::TITLE)
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(c(if offline { hex::WARN } else { hex::INK_DIM }))
+                            .child(title),
+                    )
+                    .child(div().text_color(c(hex::INK_FAINT)).child(sub))
+                    .into_any_element()
+            }
+        };
+
+        let screen = div()
+            .h_full()
+            .max_w_full()
+            .aspect_ratio(seq.width as f32 / seq.height.max(1) as f32)
+            .bg(gpui_kit::black())
+            .border_1()
+            .border_color(c(hex::LINE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(picture);
+
+        let playing = self.is_playing();
+        let transport = div()
+            .h(px(44.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .px(px(14.))
+            .bg(c(hex::PLUGE_BLACK))
+            .border_t_1()
+            .border_color(c(hex::LINE))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .font_family(theme::MONO)
+                    .text_size(theme::TITLE)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(self.tc(self.playhead))
+                    .when_some(
+                        self.playback.as_ref().filter(|pb| pb.speed != 1.),
+                        |d, pb| {
+                            d.child(
+                                div()
+                                    .text_size(theme::TEXT)
+                                    .text_color(c(hex::INK_DIM))
+                                    .child(format!("{}×", pb.speed)),
+                            )
+                        },
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .child(
+                        icon_button("to-start", "skip-back", false, false)
+                            .tooltip(tip("Go to start", Some("Home".into())))
+                            .on_click(
+                                cx.listener(|this, _, w, cx| this.go_start(&GoToStart, w, cx)),
+                            ),
+                    )
+                    .child(
+                        icon_button("step-back", "step-back", false, false)
+                            .tooltip(tip("Previous frame", Some("←".into())))
+                            .on_click(
+                                cx.listener(|this, _, w, cx| this.step_back(&StepBack, w, cx)),
+                            ),
+                    )
+                    .child(
+                        icon_button("play", if playing { "pause" } else { "play" }, true, false)
+                            .bg(c(hex::PLUGE_CONTROL))
+                            .tooltip(tip(
+                                if playing { "Pause" } else { "Play" },
+                                Some("Space".into()),
+                            ))
+                            .on_click(
+                                cx.listener(|this, _, w, cx| this.toggle_play(&TogglePlay, w, cx)),
+                            ),
+                    )
+                    .child(
+                        icon_button("step-fwd", "step-forward", false, false)
+                            .tooltip(tip("Next frame", Some("→".into())))
+                            .on_click(
+                                cx.listener(|this, _, w, cx| {
+                                    this.step_forward(&StepForward, w, cx)
+                                }),
+                            ),
+                    )
+                    .child(
+                        icon_button("to-end", "skip-forward", false, false)
+                            .tooltip(tip("Go to end", Some("End".into())))
+                            .on_click(cx.listener(|this, _, w, cx| this.go_end(&GoToEnd, w, cx))),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .justify_end()
+                    .font_family(theme::MONO)
+                    .text_color(c(hex::INK_DIM))
+                    .child(self.tc(p.end())),
+            );
+
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .bg(c(hex::PLUGE_SUB))
+            .child(
+                div()
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .px(px(10.))
+                    .gap(px(8.))
+                    .text_color(c(hex::INK_DIM))
+                    .child(SharedString::from(format!("{} Sequence", seq.name)))
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .font_family(theme::MONO)
+                            .child(format!("{}×{} · {}", seq.width, seq.height, seq.fps)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .px(px(16.))
+                    .pt(px(4.))
+                    .pb(px(8.))
+                    .child(screen),
+            )
+            .child(transport)
+    }
+
+    /* ---------- inspector ---------- */
+
+    pub(crate) fn render_inspector(&self) -> impl IntoElement + use<> {
+        let body = match self.selection.and_then(|id| self.project().clip(id)) {
+            Some(clip) => self.clip_inspector(clip),
+            None => self.sequence_inspector(),
+        };
+        div()
+            .w(px(INSPECTOR_W))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .bg(c(hex::PLUGE_BLACK))
+            .border_l_1()
+            .border_color(c(hex::LINE))
+            .child(
+                pane_header().child(
+                    div()
+                        .h(px(24.))
+                        .px(px(9.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.))
+                        .bg(c(hex::PLUGE_CONTROL))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Inspector"),
+                ),
+            )
+            .child(
+                div()
+                    .id("inspector-body")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(body),
+            )
+    }
+
+    fn sequence_inspector(&self) -> AnyElement {
+        let p = self.project();
+        let seq = &p.sequence;
+        let o = &p.output;
+        let hint = |text: &'static str, key: SharedString| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .child(text)
+                .child(kbd(key))
+        };
+        let clips = seq.clips.len();
+        div()
+            .child(title_block(
+                format!("{} Sequence", seq.name),
+                if clips == 0 {
+                    "Sequence node · empty".into()
+                } else {
+                    format!("Sequence node · {clips} clips · {} nodes", p.node_count())
+                },
+            ))
+            .child(section(
+                Category::Composite,
+                "Sequence",
+                None,
+                vec![
+                    field_row(
+                        "Resolution",
+                        format!("{} × {}", seq.width, seq.height),
+                        true,
+                    ),
+                    field_row("Frame rate", seq.fps.to_string(), true),
+                    field_row("Duration", self.tc(p.end()), true),
+                    field_row("Color space", "Rec.709 · gamma 2.4", false),
+                ],
+            ))
+            .child(section(
+                Category::Output,
+                "Output",
+                None,
+                vec![
+                    field_row("Format", format!("{} · {}", o.container, o.codec), false),
+                    field_row("Resolution", o.resolution.clone(), true),
+                    field_row("Quality", o.quality.clone(), false),
+                    field_row("File", o.path.clone(), true),
+                ],
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .px(px(12.))
+                    .py(px(14.))
+                    .text_color(c(hex::INK_DIM))
+                    .child(hint("Select a clip to see its nodes", "click".into()))
+                    .child(hint("Split at the playhead", "S".into()))
+                    .child(hint("Cut with the blade", "B".into()))
+                    .child(hint("Play, shuttle, stop", "J K L".into())),
+            )
+            .into_any_element()
+    }
+
+    fn clip_inspector(&self, clip: &Clip) -> AnyElement {
+        let p = self.project();
+        let fps = p.sequence.fps;
+        let track = p
+            .track(clip.track)
+            .map(|t| t.label.clone())
+            .unwrap_or_default();
+        let kind = match clip.kind {
+            ClipKind::Video => "Video clip",
+            ClipKind::Audio => "Audio clip",
+            ClipKind::Text => "Text clip",
+        };
+        let media = clip.media.and_then(|m| p.media(m));
+        let mut clip_rows = vec![
+            field_row("Start", time::timecode(clip.start, fps), true),
+            field_row("End", time::timecode(clip.end(), fps), true),
+            field_row("Duration", time::timecode(clip.duration, fps), true),
+        ];
+        if let Some(m) = media {
+            clip_rows.push(field_row(
+                "Source in",
+                time::timecode(clip.source_in, fps),
+                true,
+            ));
+            clip_rows.push(field_row("File", m.file_name(), true));
+        }
+
+        let mut root = div()
+            .child(title_block(
+                p.clip_name(clip),
+                format!("{kind} · {track} · {} nodes", clip.nodes.len()),
+            ))
+            .child(section(Category::Source, "Clip", None, clip_rows));
+
+        for node in &clip.nodes {
+            let rows = node
+                .kind
+                .params()
+                .iter()
+                .map(|spec| {
+                    let value = node
+                        .get(spec.key)
+                        .map(|v| spec.format(v))
+                        .unwrap_or_default();
+                    let mono = !matches!(spec.kind, videode_core::ParamKind::Text { .. });
+                    field_row(spec.label, value, mono)
+                })
+                .collect::<Vec<_>>();
+            let rows = if rows.is_empty() {
+                vec![div().text_color(c(hex::INK_FAINT)).child(match media {
+                    Some(m) => format!("{} · {}", m.codec, m.format),
+                    None => kind.to_string(),
+                })]
+            } else {
+                rows
+            };
+            let note = node.bypass.then_some("bypassed");
+            root = root.child(section(node.kind.category(), node.kind.name(), note, rows));
+        }
+        root.child(
+            div()
+                .px(px(12.))
+                .py(px(12.))
+                .text_color(c(hex::INK_FAINT))
+                .child("Values become editable with the node views in M2. Add nodes from the Nodes tab."),
+        )
+        .into_any_element()
+    }
+
+    /* ---------- status bar ---------- */
+
+    pub(crate) fn render_status_bar(&self) -> impl IntoElement + use<> {
+        let item = |icon_name: &'static str, label: String| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(6.))
+                .child(icon(icon_name, px(14.), c(hex::INK_DIM)))
+                .child(label)
+        };
+        let p = self.project();
+        let seq = &p.sequence;
+        div()
+            .h(px(STATUS_H))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .px(px(10.))
+            .bg(c(hex::PLUGE_BLACK))
+            .border_t_1()
+            .border_color(c(hex::LINE))
+            .text_color(c(hex::INK_DIM))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .when(self.status.error, |d| d.text_color(c(hex::ERROR)))
+                    .child(self.status.text.clone()),
+            )
+            .child(item(
+                "magnet",
+                if self.snap {
+                    "Snap · 1 s grid".into()
+                } else {
+                    "Snap off".into()
+                },
+            ))
+            .child(item("workflow", format!("{} nodes", p.node_count())))
+            .child(
+                div()
+                    .flex_none()
+                    .font_family(theme::MONO)
+                    .child(format!("{}×{} · {}", seq.width, seq.height, seq.fps)),
+            )
+    }
+}
+
+fn title_block(title: String, subtitle: String) -> impl IntoElement {
+    div()
+        .px(px(12.))
+        .pt(px(12.))
+        .pb(px(10.))
+        .border_b_1()
+        .border_color(c(hex::LINE))
+        .child(
+            div()
+                .text_size(theme::TITLE)
+                .font_weight(FontWeight::SEMIBOLD)
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(title),
+        )
+        .child(div().text_color(c(hex::INK_DIM)).child(subtitle))
+}
+
+fn section(
+    cat: Category,
+    title: &'static str,
+    note: Option<&'static str>,
+    rows: Vec<gpui_kit::Div>,
+) -> impl IntoElement {
+    div()
+        .border_b_1()
+        .border_color(c(hex::LINE))
+        .when(note.is_some(), |d| d.opacity(0.55))
+        .child(
+            div()
+                .h(px(34.))
+                .flex()
+                .items_center()
+                .gap(px(7.))
+                .px(px(12.))
+                .child(swatch(cat))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(div().flex_1())
+                .when_some(note, |d, n| {
+                    d.child(div().text_color(c(hex::INK_FAINT)).child(n))
+                }),
+        )
+        .child(div().px(px(12.)).pb(px(10.)).children(rows))
+}

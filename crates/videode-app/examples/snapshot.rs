@@ -1,5 +1,8 @@
 //! Renders the main window offscreen and writes a PNG, for visual checks
-//! without a display: `cargo run -p videode-app --example snapshot -- out.png 1440 900`
+//! without a display: `cargo run -p videode-app --example snapshot -- out.png 1440 900 [demo]`
+//!
+//! With `demo`, opens the demo project with a clip selected and the playhead
+//! inside it.
 //!
 //! Needs GPUI's headless renderer (WGPU on Linux, Metal on macOS).
 
@@ -9,12 +12,14 @@ use gpui::{
     AppContext as _, Bounds, HeadlessAppContext, WindowBounds, WindowOptions, point, px, size,
 };
 use videode_app::workspace::Workspace;
+use videode_core::{ClipId, Document, demo::demo_project};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let out = args.next().unwrap_or_else(|| "videode.png".into());
     let width: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1440.);
     let height: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(900.);
+    let demo = args.next().as_deref() == Some("demo");
 
     let mut cx = HeadlessAppContext::with_platform(
         gpui_platform::current_platform(true).text_system(),
@@ -35,7 +40,23 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             },
             cx,
-            |window, cx| cx.new(|cx| Workspace::new(window, cx)),
+            |window, cx| {
+                cx.new(|cx| {
+                    if !demo {
+                        return Workspace::new(window, cx);
+                    }
+                    let project = demo_project();
+                    let selected: Option<ClipId> = project
+                        .sequence
+                        .clips
+                        .iter()
+                        .find(|c| c.nodes.len() >= 3 && c.media.is_some())
+                        .map(|c| c.id);
+                    let mut ws = Workspace::with_document(Document::new(project, None), window, cx);
+                    ws.set_view(240, selected);
+                    ws
+                })
+            },
         )
     })?;
     cx.run_until_parked();

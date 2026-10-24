@@ -1,7 +1,11 @@
-//! The videode desktop application: window, theme and the editor shell.
+//! The videode desktop application: window, theme, actions and the editor.
 
+pub mod actions;
 pub mod assets;
+mod panels;
 pub mod theme;
+mod timeline;
+mod ui;
 pub mod workspace;
 
 use std::borrow::Cow;
@@ -30,6 +34,7 @@ pub fn init(cx: &mut App) {
     }
     gpui_kit::init(cx);
     theme::apply(cx);
+    actions::bind_keys(cx);
 }
 
 pub fn main_window_options(cx: &App) -> WindowOptions {
