@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T00:00:00Z",
+  "title": "Design System: videode",
+  "extensions": {
+    "colorMeta": {
+      "pluge-sub": { "role": "neutral", "displayName": "PLUGE Sub-black" },
+      "pluge-black": { "role": "neutral", "displayName": "PLUGE Black" },
+      "pluge-raised": { "role": "neutral", "displayName": "PLUGE Raised" },
+      "bone": { "role": "primary", "displayName": "Bone (selection)" },
+      "bar-source": { "role": "category", "displayName": "Bar White · Source" },
+      "bar-transform": { "role": "category", "displayName": "Bar Yellow · Transform" },
+      "bar-look": { "role": "category", "displayName": "Bar Cyan · Color & filter" },
+      "bar-composite": { "role": "category", "displayName": "Bar Green · Composite" },
+      "bar-audio": { "role": "category", "displayName": "Bar Magenta · Audio" },
+      "bar-text": { "role": "category", "displayName": "Bar Red · Text" },
+      "bar-output": { "role": "category", "displayName": "Bar Blue · Output" }
+    },
+    "typographyMeta": {
+      "body": { "displayName": "Body", "purpose": "All shell text." },
+      "title": { "displayName": "Title", "purpose": "Pane and inspector headings, palette input." },
+      "measure": { "displayName": "Measure", "purpose": "Timecode, numeric values, file facts." },
+      "keycap": { "displayName": "Keycap", "purpose": "Shortcut keycaps only." }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 18px 48px rgba(0,0,0,.6), 0 2px 6px rgba(0,0,0,.4)", "purpose": "Peek panel." },
+      { "name": "overlay", "value": "0 24px 64px rgba(0,0,0,.7)", "purpose": "Palette and sheets." },
+      { "name": "menu", "value": "0 16px 40px rgba(0,0,0,.6)", "purpose": "Dropdown menus." },
+      { "name": "selected-clip", "value": "0 0 0 1px #f1ede0, 0 4px 14px rgba(0,0,0,.4)", "purpose": "Selected clip ring." }
+    ],
+    "motion": [
+      { "name": "ease-out-expo", "value": "cubic-bezier(.16,1,.3,1)", "purpose": "Peek unfold (300ms), palette pop (160ms)." },
+      { "name": "stagger", "value": "35ms", "purpose": "Nodes appearing inside an unfolding peek." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "1280px" },
+      { "name": "min-window", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button", "kind": "button", "refersTo": "button-primary",
+      "description": "The one primary action on screen (Export / Render).",
+      "html": "<button class=\"ds-btn-primary\">Export</button>",
+      "css": ".ds-btn-primary{height:26px;padding:0 10px;border-radius:5px;background:#f1ede0;color:#09090a;border:1px solid #f1ede0;font:500 12px Geist,system-ui,sans-serif}.ds-btn-primary:hover{background:#fffaf0}"
+    },
+    {
+      "name": "Param Field", "kind": "input", "refersTo": "field",
+      "description": "Numeric inspector field with unit; label scrubs.",
+      "html": "<div class=\"ds-fld\"><input value=\"+0.35\"><span>EV</span></div>",
+      "css": ".ds-fld{display:flex;align-items:center;height:24px;background:#09090a;border:1px solid #2a2a2f;border-radius:5px;padding:0 7px;gap:4px;width:180px}.ds-fld input{flex:1;min-width:0;background:none;border:0;outline:0;color:#e8e7e2;font:12px 'Geist Mono',monospace}.ds-fld span{color:#8a8984;font:12px 'Geist Mono',monospace}.ds-fld:focus-within{border-color:#f1ede0}"
+    },
+    {
+      "name": "Clip with chain strip", "kind": "custom", "refersTo": "clip",
+      "description": "Timeline clip; bottom strip shows its nodes in category colour.",
+      "html": "<div class=\"ds-clip\"><span>mandel_dive</span><i><b style=\"background:#bdbdb8\"></b><b style=\"background:#c9c43c\"></b><b style=\"background:#3cc4c4\"></b></i></div>",
+      "css": ".ds-clip{width:220px;height:48px;background:#222226;border:1px solid #3a3a41;border-radius:4px;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden;color:#e8e7e2;font:500 12px Geist,system-ui,sans-serif}.ds-clip span{padding:2px 6px}.ds-clip i{display:flex;gap:1px;height:5px}.ds-clip b{flex:1}"
+    },
+    {
+      "name": "Node", "kind": "custom", "refersTo": "node",
+      "description": "Graph node with category cap and mono summary.",
+      "html": "<div class=\"ds-node\"><i></i><b>Grade</b><small>+0.35 EV · 5600 K</small></div>",
+      "css": ".ds-node{width:136px;background:#111113;border:1px solid #3a3a41;border-radius:6px;color:#e8e7e2;font:12px Geist,system-ui,sans-serif}.ds-node i{display:block;height:4px;background:#3cc4c4;border-radius:5px 5px 0 0}.ds-node b{display:block;font-weight:600;padding:6px 10px 0}.ds-node small{display:block;padding:0 10px 8px;color:#a3a29d;font:12px 'Geist Mono',monospace}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Test Card",
+    "overview": "SMPTE bars and PLUGE: near-black steps for the shell, seven bar colours reserved for node categories, a conventional NLE layout wrapped around a node graph that is revealed by the chain strip under each clip.",
+    "keyCharacteristics": ["Three PLUGE surface steps", "Bar colours only identify node categories", "State is line form", "Two type sizes", "Mono for measurement only"],
+    "rules": [
+      { "name": "The Bars-Are-Nodes Rule", "body": "Bar colours appear only where they identify a node category.", "section": "colors" },
+      { "name": "The Two-Size Rule", "body": "Shell text is 12px or 13px; rank by weight and tone.", "section": "typography" },
+      { "name": "The Line-Form State Rule", "body": "Solid live, dashed offline/bypassed, struck muted, double locked.", "section": "elevation" }
+    ],
+    "dos": ["Show every shortcut where its action lives", "Pair state colour with a line form"],
+    "donts": ["Bar colours on chrome", "A third shell type size", "Side-stripe accents on rows", "Floating panels over the transport"]
+  }
+}
