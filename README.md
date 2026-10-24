@@ -11,9 +11,9 @@ Inside, everything is a node: media, clips, effects, tracks, the sequence and th
 
 ## Status
 
-Milestone M0: the editor shell opens with the full panel layout. Editing, playback and export are not implemented yet.
+Milestone M1: real timeline editing on the node-based project model. Move, trim, split, blade, delete and ripple delete, with snapping, zoom, undo/redo and `.vde` (KDL) save/load. File → Open demo project loads a sample sequence. Picture, sound and export arrive in later milestones.
 
-![M0 shell](docs/m0-shell.png)
+![M1 timeline](docs/m1-timeline.png)
 
 ## Build
 
@@ -21,7 +21,8 @@ Requires a recent stable Rust toolchain.
 
 ```sh
 cargo run -p videode-app            # opens the editor
-cargo run -p videode-app --example snapshot -- out.png 1440 900   # offscreen screenshot
+cargo run -p videode-app --example snapshot -- out.png 1440 900        # offscreen screenshot
+cargo run -p videode-app --example snapshot -- out.png 1440 900 demo   # same, demo project
 ```
 
 Linux needs the usual GPUI system libraries (Debian/Ubuntu):

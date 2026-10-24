@@ -34,30 +34,16 @@ pub fn c(hex: u32) -> Hsla {
     rgb(hex).into()
 }
 
-/// Node categories, each owning one 75% SMPTE bar colour.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Category {
-    Source,
-    Transform,
-    Look,
-    Composite,
-    Audio,
-    Text,
-    Output,
+pub use videode_core::Category;
+
+/// Node categories each own one 75% SMPTE bar colour.
+pub trait CategoryExt {
+    fn color(self) -> Hsla;
+    fn label(self) -> &'static str;
 }
 
-impl Category {
-    pub const ALL: [Category; 7] = [
-        Category::Source,
-        Category::Transform,
-        Category::Look,
-        Category::Composite,
-        Category::Audio,
-        Category::Text,
-        Category::Output,
-    ];
-
-    pub fn color(self) -> Hsla {
+impl CategoryExt for Category {
+    fn color(self) -> Hsla {
         c(match self {
             Category::Source => 0xbdbdb8,
             Category::Transform => 0xc9c43c,
@@ -69,7 +55,7 @@ impl Category {
         })
     }
 
-    pub fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Category::Source => "Source",
             Category::Transform => "Transform",
@@ -81,6 +67,16 @@ impl Category {
         }
     }
 }
+
+pub const ALL_CATEGORIES: [Category; 7] = [
+    Category::Source,
+    Category::Transform,
+    Category::Look,
+    Category::Composite,
+    Category::Audio,
+    Category::Text,
+    Category::Output,
+];
 
 /// Points GPUI Kit's component theme at the Test Card palette so menus,
 /// inputs and popovers from the kit match the shell.
