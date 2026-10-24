@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+videode-core = { path = "crates/videode-core" }
+# gpui-kit pins a matching GPUI snapshot and re-exports gpui, gpui-base and gpui-component.
+gpui-kit = "=0.8.0"
+anyhow = "1"
+
+[profile.dev.package."*"]
+opt-level = 2
