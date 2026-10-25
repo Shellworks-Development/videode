@@ -18,7 +18,7 @@ use videode_core::{
     Clip, ClipId, ClipKind, Frame, NodeKind, StreamKind, Track, TrackId, snap, time,
 };
 
-use crate::actions::{Split, ZoomIn, ZoomOut, ZoomToFit};
+use crate::actions::{Split, ToggleGraph, TogglePeek, ZoomIn, ZoomOut, ZoomToFit};
 use crate::motion::{self, anim, ease_out, key, lerp};
 use crate::theme::{self, CategoryExt, c, hex};
 use crate::ui::{self, ghost_button, icon_button, tip};
@@ -97,7 +97,7 @@ enum Hit {
 }
 
 impl Workspace {
-    fn lanes_width(&self) -> f32 {
+    pub(crate) fn lanes_width(&self) -> f32 {
         f32::from(self.tl.bounds.get().size.width)
     }
 
@@ -106,7 +106,7 @@ impl Workspace {
         ((local + self.tl.scroll_x) / self.tl.ppf).round() as Frame
     }
 
-    fn frame_x(&self, frame: Frame) -> f32 {
+    pub(crate) fn frame_x(&self, frame: Frame) -> f32 {
         frame as f32 * self.tl.ppf - self.tl.scroll_x
     }
 
@@ -271,7 +271,7 @@ impl Workspace {
         window.focus(&self.focus, cx);
         match self.hit(e.position) {
             Hit::Empty => {
-                self.selection = None;
+                self.select(None);
                 self.seek(self.frame_at(e.position.x));
                 self.tl.drag = Some(Drag::Scrub);
             }
@@ -285,7 +285,7 @@ impl Workspace {
                     }
                     return;
                 }
-                self.selection = Some(id);
+                self.select(Some(id));
                 let clip = self.project().clip(id).expect("hit-tested");
                 let locked = self.project().track(clip.track).is_some_and(|t| t.locked);
                 if locked {
@@ -565,6 +565,16 @@ impl Workspace {
                 ghost_button("split", "scissors", "Split", Some("S"))
                     .tooltip(tip("Split at the playhead", None))
                     .on_click(|_, w, cx| w.dispatch_action(Box::new(Split), cx)),
+            )
+            .child(
+                ghost_button("peek", "layers", "Peek nodes", Some("Tab"))
+                    .tooltip(tip("Unfold the selected clip's nodes", None))
+                    .on_click(|_, w, cx| w.dispatch_action(Box::new(TogglePeek), cx)),
+            )
+            .child(
+                ghost_button("graph", "workflow", "Graph", Some("⇧ Tab"))
+                    .tooltip(tip("The whole sequence as a node graph", None))
+                    .on_click(|_, w, cx| w.dispatch_action(Box::new(ToggleGraph), cx)),
             )
             .child(div().flex_1())
             .child(
