@@ -11,9 +11,17 @@ Inside, everything is a node: media, clips, effects, tracks, the sequence and th
 
 ## Status
 
-Milestone M1: real timeline editing on the node-based project model. Move, trim, split, blade, delete and ripple delete, with snapping, zoom, undo/redo and `.vde` (KDL) save/load. File → Open demo project loads a sample sequence. Picture, sound and export arrive in later milestones.
+Milestone M2: the node views. Every clip is a chain of nodes you can see and edit:
 
-![M1 timeline](docs/m1-timeline.png)
+- **Inspector:** every value is editable. Click to type, drag the label to scrub (Shift ×10, Alt ÷10, double-click resets), ↑/↓ to step. Bypass, remove and add nodes. Export opens the Output node.
+- **Peek (Tab):** the selected clip's nodes unfold under it; drag to reorder, + to add, Del removes, ⇧B bypasses.
+- **Graph (⇧Tab):** the whole sequence as one graph: clips → tracks → Composite/Mix → Sequence → Output. Drag to pan, scroll to zoom, double-click a clip to open it in the timeline.
+- **Command palette (Ctrl/Cmd K):** fuzzy search over actions, nodes, clips and media; A opens it on "Add".
+
+M1's timeline editing (move, trim, split, blade, ripple delete, snapping, zoom, undo/redo, `.vde` KDL files) is all still there. File → Open demo project loads a sample sequence. Picture, sound and export arrive in M3–M5.
+
+![M2 peek](docs/m2-peek.png)
+![M2 graph](docs/m2-graph.png)
 
 ## Build
 
@@ -23,7 +31,8 @@ Requires a recent stable Rust toolchain.
 cargo run -p videode-app            # opens the editor
 cargo run -p videode-app --example snapshot -- out.png 1440 900        # offscreen screenshot
 cargo run -p videode-app --example snapshot -- out.png 1440 900 demo   # same, demo project
-                                                                      # (also: settings, about, splash@0.4)
+                                                                      # (also: settings, about, splash@0.4,
+                                                                      #  peek, graph, output, focus, edit, palette=<q>)
 ./scripts/brand.sh                     # regenerate icons from assets/brand/*.svg
 ./packaging/linux/install.sh           # install binary, launcher and icons to ~/.local
 ```

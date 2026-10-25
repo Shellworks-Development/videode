@@ -138,6 +138,58 @@ pub struct Sequence {
     pub clips: Vec<Clip>,
 }
 
+/// One setting on the Output node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OutputField {
+    Container,
+    Codec,
+    Resolution,
+    Quality,
+    Path,
+}
+
+impl OutputField {
+    pub const ALL: [OutputField; 5] = [
+        OutputField::Container,
+        OutputField::Codec,
+        OutputField::Resolution,
+        OutputField::Quality,
+        OutputField::Path,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            OutputField::Container => "Container",
+            OutputField::Codec => "Codec",
+            OutputField::Resolution => "Resolution",
+            OutputField::Quality => "Quality",
+            OutputField::Path => "File",
+        }
+    }
+
+    /// The allowed values; empty for free text.
+    pub fn options(self) -> &'static [&'static str] {
+        match self {
+            OutputField::Container => &["MP4", "MOV", "MKV", "WebM"],
+            OutputField::Codec => &["H.264", "H.265", "ProRes 422", "AV1", "VP9"],
+            OutputField::Resolution => &["1920×1080", "3840×2160", "1280×720"],
+            OutputField::Quality => &["Draft", "Standard", "High", "Lossless"],
+            OutputField::Path => &[],
+        }
+    }
+}
+
+/// File extension for a container name.
+pub fn container_extension(container: &str) -> Option<&'static str> {
+    match container {
+        "MP4" => Some("mp4"),
+        "MOV" => Some("mov"),
+        "MKV" => Some("mkv"),
+        "WebM" => Some("webm"),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct OutputSettings {
     pub container: String,
@@ -145,6 +197,18 @@ pub struct OutputSettings {
     pub resolution: String,
     pub quality: String,
     pub path: String,
+}
+
+impl OutputSettings {
+    pub fn get(&self, field: OutputField) -> &str {
+        match field {
+            OutputField::Container => &self.container,
+            OutputField::Codec => &self.codec,
+            OutputField::Resolution => &self.resolution,
+            OutputField::Quality => &self.quality,
+            OutputField::Path => &self.path,
+        }
+    }
 }
 
 impl Default for OutputSettings {

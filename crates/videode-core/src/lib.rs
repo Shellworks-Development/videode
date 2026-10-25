@@ -4,6 +4,7 @@
 pub mod demo;
 pub mod document;
 pub mod edit;
+pub mod fuzzy;
 pub mod graph;
 pub mod kdl_io;
 pub mod node;
@@ -16,6 +17,8 @@ pub use edit::{EditError, EditResult, snap};
 pub use node::{
     Category, ClipKind, Node, NodeId, NodeKind, ParamKind, ParamSpec, StreamKind, Value,
 };
-pub use project::{Clip, ClipId, Media, MediaId, MediaKind, Project, Track, TrackId};
+pub use project::{
+    Clip, ClipId, Media, MediaId, MediaKind, OutputField, OutputSettings, Project, Track, TrackId,
+};
 pub use settings::{Animations, Settings};
 pub use time::{Fps, Frame};

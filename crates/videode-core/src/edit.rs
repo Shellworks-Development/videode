@@ -3,7 +3,7 @@
 //! without changing the project.
 
 use crate::node::{ClipKind, NodeId, NodeKind, ParamError, Value};
-use crate::project::{Clip, ClipId, MediaId, Project, TrackId};
+use crate::project::{Clip, ClipId, MediaId, OutputField, Project, TrackId, container_extension};
 use crate::time::Frame;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -31,6 +31,8 @@ pub enum EditError {
     },
     #[error("{0} is what the clip is made from; delete the clip instead")]
     GeneratorFixed(&'static str),
+    #[error("{0} can't be {1}")]
+    InvalidOutput(&'static str, String),
     #[error(transparent)]
     Param(#[from] ParamError),
 }
@@ -364,6 +366,38 @@ impl Project {
         Ok(())
     }
 
+    /// Changes one Output setting. Changing the container also fixes up a
+    /// known file extension on the output path.
+    pub fn set_output(&mut self, field: OutputField, value: &str) -> EditResult<()> {
+        let options = field.options();
+        let value = value.trim();
+        let ok = if options.is_empty() {
+            !value.is_empty()
+        } else {
+            options.contains(&value)
+        };
+        if !ok {
+            return Err(EditError::InvalidOutput(field.label(), value.to_string()));
+        }
+        let o = &mut self.output;
+        match field {
+            OutputField::Container => {
+                if let (Some(ext), Some((stem, old))) =
+                    (container_extension(value), o.path.rsplit_once('.'))
+                    && ["mp4", "mov", "mkv", "webm"].contains(&old.to_ascii_lowercase().as_str())
+                {
+                    o.path = format!("{stem}.{ext}");
+                }
+                o.container = value.into();
+            }
+            OutputField::Codec => o.codec = value.into(),
+            OutputField::Resolution => o.resolution = value.into(),
+            OutputField::Quality => o.quality = value.into(),
+            OutputField::Path => o.path = value.into(),
+        }
+        Ok(())
+    }
+
     pub fn set_track_enabled(&mut self, track: TrackId, enabled: bool) -> EditResult<()> {
         let t = self
             .sequence
@@ -566,5 +600,54 @@ mod tests {
         assert_eq!(pts, vec![0, 77, 150, 250]);
         assert_eq!(snap(153, &pts, 5), Some(150));
         assert_eq!(snap(160, &pts, 5), None);
+    }
+
+    #[test]
+    fn output_settings_validate_and_fix_extension() {
+        let mut p = Project::new("t");
+        p.set_output(OutputField::Container, "MOV").unwrap();
+        assert_eq!(p.output.container, "MOV");
+        assert_eq!(p.output.path, "export.mov");
+        assert!(p.set_output(OutputField::Codec, "DivX").is_err());
+        assert!(p.set_output(OutputField::Path, "  ").is_err());
+        p.set_output(OutputField::Path, "final cut.final").unwrap();
+        p.set_output(OutputField::Container, "MKV").unwrap();
+        // Unknown extensions are left alone.
+        assert_eq!(p.output.path, "final cut.final");
+    }
+
+    #[test]
+    fn node_chain_edits() {
+        let (mut p, a, ..) = fixture();
+        let t = p.add_node(a, NodeKind::Transform).unwrap();
+        let g = p.add_node(a, NodeKind::Grade).unwrap();
+        assert_eq!(
+            p.move_node(a, g, 0).unwrap(),
+            1,
+            "can't go before the generator"
+        );
+        let kinds = |p: &Project| {
+            p.clip(a)
+                .unwrap()
+                .nodes
+                .iter()
+                .map(|n| n.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            kinds(&p),
+            [NodeKind::Source, NodeKind::Grade, NodeKind::Transform]
+        );
+        p.set_bypass(a, t, true).unwrap();
+        assert!(p.clip(a).unwrap().node(t).unwrap().bypass);
+        let source = p.clip(a).unwrap().nodes[0].id;
+        assert!(matches!(
+            p.remove_node(a, source),
+            Err(EditError::GeneratorFixed(_))
+        ));
+        assert!(matches!(
+            p.add_node(a, NodeKind::Gain),
+            Err(EditError::NotApplicable { .. })
+        ));
     }
 }

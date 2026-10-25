@@ -5,6 +5,8 @@
 //! - `demo`: the demo project with a clip selected and the playhead inside it
 //! - `settings`, `about`: open that dialog
 //! - `splash@0.4`: the launch splash frozen 0.4 s in
+//! - `peek`, `graph`, `output`, `focus`, `edit`, `palette=<query>`: see
+//!   `Workspace::preview`
 //!
 //! Animations are off (end states) except in `splash@` mode.
 //!
@@ -77,6 +79,9 @@ fn main() -> anyhow::Result<()> {
                         ws.show_modal(Modal::Settings);
                     } else if has("about") {
                         ws.show_modal(Modal::About);
+                    }
+                    for mode in modes.split(',') {
+                        ws.preview(mode, window, cx);
                     }
                     if let Some(t) = splash {
                         ws.preview_splash(Duration::from_secs_f32(t));

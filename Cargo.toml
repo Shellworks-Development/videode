@@ -13,5 +13,11 @@ videode-core = { path = "crates/videode-core" }
 gpui-kit = "=0.8.0"
 anyhow = "1"
 
+# Line tables only: backtraces keep file:line, but debug builds and test
+# binaries stay a fraction of the size (full debuginfo filled the disk).
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
+debug = "line-tables-only"
