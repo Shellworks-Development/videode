@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="800" viewBox="112 112 800 800">
+  <title>videode (16–32 px)</title>
+  <!-- Heavier strokes and a tighter crop so the mark holds at favicon sizes. -->
+  <rect width="1024" height="1024" rx="228" fill="#111113"/>
+  <g fill="none" stroke="#f1ede0" stroke-width="92" stroke-linecap="round">
+    <path d="M300 300 C 300 520, 512 560, 512 724"/>
+    <path d="M724 300 C 724 520, 512 560, 512 724"/>
+  </g>
+  <g fill="#111113" stroke-width="56">
+    <circle cx="300" cy="300" r="82" stroke="#3cc4c4"/>
+    <circle cx="724" cy="300" r="82" stroke="#c43cc4"/>
+  </g>
+  <rect x="392" y="640" width="240" height="168" rx="40" fill="#4a62d0"/>
+</svg>

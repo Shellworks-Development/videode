@@ -1,6 +1,7 @@
 //! The editor window: owns the document being edited and the view state
 //! (playhead, selection, tool, zoom), handles every action, and lays out the
-//! panels. Panels live in `panels.rs`, the timeline in `timeline.rs`.
+//! panels. Panels live in `panels.rs`, the timeline in `timeline.rs`, and the
+//! settings and about dialogs and launch splash in `dialogs.rs`.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -16,6 +17,7 @@ use videode_core::{
 };
 
 use crate::actions::*;
+use crate::settings;
 use crate::theme::{self, c, hex};
 use crate::timeline::TimelineState;
 use crate::ui::cmd_key;
@@ -41,6 +43,32 @@ pub(crate) struct Playback {
 pub(crate) struct Status {
     pub text: SharedString,
     pub error: bool,
+    /// Bumped on every message so the status line animates in.
+    pub seq: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Modal {
+    Settings,
+    About,
+}
+
+/// One-shot feedback animations. Each carries a sequence number that keys
+/// its animation, so a repeat restarts it.
+#[derive(Default)]
+pub(crate) struct Fx {
+    /// Clips changed by the last undo or redo.
+    pub flash: Option<(Vec<ClipId>, u64)>,
+    /// Where the last split or blade cut happened.
+    pub cut: Option<(Frame, u64)>,
+    seq: u64,
+}
+
+impl Fx {
+    fn next(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
 }
 
 pub struct Workspace {
@@ -54,6 +82,11 @@ pub struct Workspace {
     pub(crate) tl: TimelineState,
     pub(crate) status: Status,
     pub(crate) playback: Option<Playback>,
+    pub(crate) modal: Option<Modal>,
+    pub(crate) modal_opened: Instant,
+    /// When the launch splash started; `None` once it's gone.
+    pub(crate) splash: Option<Instant>,
+    pub(crate) fx: Fx,
     title: String,
 }
 
@@ -65,22 +98,39 @@ impl Workspace {
     pub fn with_document(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        let snap = !cx.has_global::<settings::AppSettings>() || settings::get(cx).snap;
         Self {
             doc,
             focus,
             playhead: 0,
             selection: None,
             tool: Tool::Select,
-            snap: true,
+            snap,
             bin_tab: BinTab::Media,
             tl: TimelineState::default(),
             status: Status {
                 text: "New project · open the demo to try editing, or open a .vde project".into(),
                 error: false,
+                seq: 0,
             },
             playback: None,
+            modal: None,
+            modal_opened: Instant::now(),
+            splash: None,
+            fx: Fx::default(),
             title: String::new(),
         }
+    }
+
+    /// For snapshots: open a dialog directly.
+    pub fn show_modal(&mut self, modal: Modal) {
+        self.modal = Some(modal);
+        self.modal_opened = Instant::now();
+    }
+
+    /// For snapshots: show the launch splash as it looks `elapsed` in.
+    pub fn preview_splash(&mut self, elapsed: std::time::Duration) {
+        self.splash = Instant::now().checked_sub(elapsed);
     }
 
     /// For tests and snapshots: set the playhead and selection directly.
@@ -106,17 +156,34 @@ impl Workspace {
     }
 
     pub(crate) fn say(&mut self, text: impl Into<SharedString>) {
-        self.status = Status {
-            text: text.into(),
-            error: false,
-        };
+        self.set_status(text.into(), false);
     }
 
     pub(crate) fn say_error(&mut self, text: impl Into<SharedString>) {
-        self.status = Status {
-            text: text.into(),
-            error: true,
-        };
+        self.set_status(text.into(), true);
+    }
+
+    fn set_status(&mut self, text: SharedString, error: bool) {
+        if self.status.text != text || self.status.error != error {
+            self.status = Status {
+                text,
+                error,
+                seq: self.status.seq + 1,
+            };
+        }
+    }
+
+    /// Plays the launch splash, if enabled and motion is allowed.
+    pub fn start_splash(&mut self, cx: &mut Context<Self>) {
+        if settings::get(cx).splash && settings::motion(cx) {
+            self.splash = Some(Instant::now());
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn flash_cut(&mut self, at: Frame) {
+        let seq = self.fx.next();
+        self.fx.cut = Some((at, seq));
     }
 
     /// Runs one undoable edit, reporting failures in the status bar.
@@ -137,7 +204,22 @@ impl Workspace {
         r
     }
 
-    fn after_history_change(&mut self) {
+    /// Drops a selection that no longer exists and flashes the clips that
+    /// changed, so it's clear what undo or redo touched.
+    fn after_history_change(&mut self, before: &Project) {
+        let changed: Vec<ClipId> = self
+            .doc
+            .project
+            .sequence
+            .clips
+            .iter()
+            .filter(|c| before.clip(c.id) != Some(*c))
+            .map(|c| c.id)
+            .collect();
+        if !changed.is_empty() {
+            let seq = self.fx.next();
+            self.fx.flash = Some((changed, seq));
+        }
         if let Some(id) = self.selection
             && self.doc.project.clip(id).is_none()
         {
@@ -309,20 +391,22 @@ impl Workspace {
     /* ---------- edit actions ---------- */
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
+        let before = self.doc.project.clone();
         match self.doc.undo() {
             Some(label) => self.say(format!("Undid {label}")),
             None => self.say("Nothing to undo"),
         }
-        self.after_history_change();
+        self.after_history_change(&before);
         cx.notify();
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
+        let before = self.doc.project.clone();
         match self.doc.redo() {
             Some(label) => self.say(format!("Redid {label}")),
             None => self.say("Nothing to redo"),
         }
-        self.after_history_change();
+        self.after_history_change(&before);
         cx.notify();
     }
 
@@ -352,6 +436,7 @@ impl Workspace {
                 .try_for_each(|id| p.split(*id, t).map(|_| ()))
         });
         if done.is_some() {
+            self.flash_cut(t);
             let what = if n == 1 {
                 "1 clip".to_string()
             } else {
@@ -397,7 +482,9 @@ impl Workspace {
     }
 
     fn deselect(&mut self, _: &Deselect, _: &mut Window, cx: &mut Context<Self>) {
-        if self.tl.drag.is_some() {
+        if self.modal.is_some() {
+            self.modal = None;
+        } else if self.tl.drag.is_some() {
             self.cancel_drag();
         } else if self.tool == Tool::Blade {
             self.tool = Tool::Select;
@@ -486,17 +573,39 @@ impl Workspace {
     /* ---------- view actions ---------- */
 
     pub(crate) fn zoom_in(&mut self, _: &ZoomIn, _: &mut Window, cx: &mut Context<Self>) {
-        self.zoom_around_playhead(1.4);
+        let step = settings::get(cx).zoom_step as f32;
+        self.zoom_around_playhead(step, settings::motion(cx));
         cx.notify();
     }
 
     pub(crate) fn zoom_out(&mut self, _: &ZoomOut, _: &mut Window, cx: &mut Context<Self>) {
-        self.zoom_around_playhead(1. / 1.4);
+        let step = settings::get(cx).zoom_step as f32;
+        self.zoom_around_playhead(1. / step, settings::motion(cx));
         cx.notify();
     }
 
     pub(crate) fn zoom_fit(&mut self, _: &ZoomToFit, _: &mut Window, cx: &mut Context<Self>) {
-        self.tl.fit_pending = true;
+        self.fit(settings::motion(cx));
+        cx.notify();
+    }
+
+    /* ---------- dialogs ---------- */
+
+    pub(crate) fn open_settings(
+        &mut self,
+        _: &OpenSettings,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        settings::refresh_system(cx);
+        self.modal = Some(Modal::Settings);
+        self.modal_opened = Instant::now();
+        cx.notify();
+    }
+
+    pub(crate) fn about(&mut self, _: &About, _: &mut Window, cx: &mut Context<Self>) {
+        self.modal = Some(Modal::About);
+        self.modal_opened = Instant::now();
         cx.notify();
     }
 
@@ -642,9 +751,11 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.tick_playback(window);
         self.update_title(window);
+        let editing = self.modal.is_none();
 
         div()
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .bg(c(hex::PLUGE_SUB))
@@ -661,31 +772,44 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::quit))
             .on_action(cx.listener(Self::export))
-            .on_action(cx.listener(Self::undo))
-            .on_action(cx.listener(Self::redo))
-            .on_action(cx.listener(Self::split))
-            .on_action(cx.listener(Self::delete_clip))
-            .on_action(cx.listener(Self::ripple_delete))
             .on_action(cx.listener(Self::deselect))
-            .on_action(cx.listener(Self::select_tool))
-            .on_action(cx.listener(Self::blade_tool))
-            .on_action(cx.listener(Self::toggle_snap))
-            .on_action(cx.listener(Self::toggle_track))
-            .on_action(cx.listener(Self::zoom_in))
-            .on_action(cx.listener(Self::zoom_out))
-            .on_action(cx.listener(Self::zoom_fit))
-            .on_action(cx.listener(Self::toggle_play))
-            .on_action(cx.listener(Self::shuttle_forward))
-            .on_action(cx.listener(Self::shuttle_backward))
-            .on_action(cx.listener(Self::shuttle_stop))
-            .on_action(cx.listener(Self::step_back))
-            .on_action(cx.listener(Self::step_forward))
-            .on_action(cx.listener(Self::second_back))
-            .on_action(cx.listener(Self::second_forward))
-            .on_action(cx.listener(Self::prev_edit))
-            .on_action(cx.listener(Self::next_edit))
-            .on_action(cx.listener(Self::go_start))
-            .on_action(cx.listener(Self::go_end))
+            .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::about))
+            // Editing and transport are detached while a dialog is open.
+            .when(editing, |d| {
+                d.on_action(cx.listener(Self::undo))
+                    .on_action(cx.listener(Self::redo))
+                    .on_action(cx.listener(Self::split))
+                    .on_action(cx.listener(Self::delete_clip))
+                    .on_action(cx.listener(Self::ripple_delete))
+                    .on_action(cx.listener(Self::select_tool))
+                    .on_action(cx.listener(Self::blade_tool))
+                    .on_action(cx.listener(Self::toggle_snap))
+                    .on_action(cx.listener(Self::toggle_track))
+                    .on_action(cx.listener(Self::zoom_in))
+                    .on_action(cx.listener(Self::zoom_out))
+                    .on_action(cx.listener(Self::zoom_fit))
+                    .on_action(cx.listener(Self::toggle_play))
+                    .on_action(cx.listener(Self::shuttle_forward))
+                    .on_action(cx.listener(Self::shuttle_backward))
+                    .on_action(cx.listener(Self::shuttle_stop))
+                    .on_action(cx.listener(Self::step_back))
+                    .on_action(cx.listener(Self::step_forward))
+                    .on_action(cx.listener(Self::second_back))
+                    .on_action(cx.listener(Self::second_forward))
+                    .on_action(cx.listener(Self::prev_edit))
+                    .on_action(cx.listener(Self::next_edit))
+                    .on_action(cx.listener(Self::go_start))
+                    .on_action(cx.listener(Self::go_end))
+            })
+            // Any key skips the splash without doing anything else.
+            .when(self.splash.is_some(), |d| {
+                d.capture_key_down(cx.listener(|this, _, _, cx| {
+                    this.splash = None;
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+            })
             .child(self.render_top_bar(cx))
             .child(
                 div()
@@ -706,5 +830,7 @@ impl Render for Workspace {
             )
             .child(self.render_timeline(window, cx))
             .child(self.render_status_bar())
+            .children(self.modal.map(|m| self.render_modal(m, cx)))
+            .children(self.render_splash(window, cx))
     }
 }

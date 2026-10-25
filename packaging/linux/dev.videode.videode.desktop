@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=videode
+GenericName=Video Editor
+Comment=A video editor where everything is a node
+Exec=videode %F
+Icon=dev.videode.videode
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-videode-project;
+StartupWMClass=dev.videode.videode
+Keywords=video;editor;nle;node;
