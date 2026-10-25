@@ -5,11 +5,15 @@ use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, FocusHandle, FontWeight, SharedString, div, px};
+use gpui_kit::{
+    AnimationExt as _, AnyElement, Context, FocusHandle, FontWeight, SharedString, div, px,
+};
 use videode_core::{Clip, ClipKind, MediaId, MediaKind, NodeKind, time};
 
 use crate::actions::*;
-use crate::theme::{self, ALL_CATEGORIES, Category, CategoryExt, c, hex};
+use crate::brand;
+use crate::motion::{self, anim, hover_fx, key, lerp};
+use crate::theme::{self, Category, CategoryExt, c, hex};
 use crate::ui::{button, cmd_key, field_row, icon, icon_button, kbd, pane_header, swatch, tip};
 use crate::workspace::{BinTab, Workspace};
 
@@ -29,6 +33,8 @@ fn file_menu(m: PopupMenu, _: &Workspace) -> PopupMenu {
         .menu("Save as…", Box::new(SaveProjectAs))
         .separator()
         .menu("Export…", Box::new(Export))
+        .separator()
+        .menu("Settings…", Box::new(OpenSettings))
         .separator()
         .menu("Quit", Box::new(Quit))
 }
@@ -97,6 +103,12 @@ fn playback_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
     .menu("Go to end", Box::new(GoToEnd))
 }
 
+fn help_menu(m: PopupMenu, _: &Workspace) -> PopupMenu {
+    m.menu("Settings…", Box::new(OpenSettings))
+        .separator()
+        .menu("About videode", Box::new(About))
+}
+
 impl Workspace {
     fn menu(
         &self,
@@ -120,9 +132,13 @@ impl Workspace {
     }
 
     pub(crate) fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let logo = div().flex().gap(px(2.)).mr(px(6.)).children(
-            ALL_CATEGORIES.map(|cat| div().w(px(3.)).h(px(15.)).rounded(px(1.)).bg(cat.color())),
-        );
+        let logo = div()
+            .id("logo")
+            .mr(px(2.))
+            .cursor_pointer()
+            .tooltip(tip("About videode", None))
+            .on_click(|_, w, cx| w.dispatch_action(Box::new(About), cx))
+            .child(brand::mark(20., 1.));
 
         let p = self.project();
         let crumbs = div()
@@ -170,6 +186,7 @@ impl Workspace {
             .bg(c(hex::PLUGE_SUB))
             .text_color(c(hex::INK_DIM))
             .cursor_pointer()
+            .map(|d| hover_fx(d, "command-palette", c(hex::PLUGE_RAISED), px(5.)))
             .hover(|s| s.text_color(c(hex::INK)))
             .tooltip(tip("Every action, node and clip", Some(cmd_key("K"))))
             .on_click(cx.listener(|this, _, _, cx| {
@@ -219,7 +236,8 @@ impl Workspace {
                     .child(self.menu("Edit", edit_menu, cx))
                     .child(self.menu("Clip", clip_menu, cx))
                     .child(self.menu("View", view_menu, cx))
-                    .child(self.menu("Playback", playback_menu, cx)),
+                    .child(self.menu("Playback", playback_menu, cx))
+                    .child(self.menu("Help", help_menu, cx)),
             )
             .child(crumbs)
             .child(
@@ -311,6 +329,7 @@ impl Workspace {
                 .cursor_pointer()
                 .text_color(c(if selected { hex::INK } else { hex::INK_DIM }))
                 .when(selected, |d| d.bg(c(hex::PLUGE_CONTROL)))
+                .map(|d| hover_fx(d, id, c(hex::PLUGE_CONTROL), px(5.)))
                 .hover(|s| s.text_color(c(hex::INK)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.bin_tab = which;
@@ -445,7 +464,7 @@ impl Workspace {
                     .py(px(5.))
                     .rounded(px(5.))
                     .cursor_pointer()
-                    .hover(|s| s.bg(c(hex::PLUGE_RAISED)))
+                    .map(|d| hover_fx(d, format!("media-{}", id.0), c(hex::PLUGE_RAISED), px(5.)))
                     .tooltip(tip(
                         if m.offline {
                             format!("{} · file not found", m.path.display())
@@ -558,7 +577,12 @@ impl Workspace {
                     .rounded(px(5.))
                     .when(unusable, |d| d.opacity(0.4))
                     .when(!unusable, |d| {
-                        d.cursor_pointer().hover(|s| s.bg(c(hex::PLUGE_RAISED)))
+                        hover_fx(
+                            d.cursor_pointer(),
+                            format!("node-{}", kind.ident()),
+                            c(hex::PLUGE_RAISED),
+                            px(5.),
+                        )
                     })
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.add_node_to_selection(kind, cx)),
@@ -967,14 +991,21 @@ impl Workspace {
             .border_color(c(hex::LINE))
             .text_color(c(hex::INK_DIM))
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .when(self.status.error, |d| d.text_color(c(hex::ERROR)))
-                    .child(self.status.text.clone()),
+                div().flex_1().min_w_0().overflow_hidden().child(
+                    div()
+                        .relative()
+                        .w_full()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .when(self.status.error, |d| d.text_color(c(hex::ERROR)))
+                        .child(self.status.text.clone())
+                        .with_animation(
+                            key("status", self.status.seq),
+                            anim(motion::STATUS),
+                            |d, t| d.opacity(t).top(px(lerp(6., 0., t))),
+                        ),
+                ),
             )
             .child(item(
                 "magnet",

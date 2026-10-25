@@ -1,17 +1,22 @@
 //! Renders the main window offscreen and writes a PNG, for visual checks
-//! without a display: `cargo run -p videode-app --example snapshot -- out.png 1440 900 [demo]`
+//! without a display: `cargo run -p videode-app --example snapshot -- out.png 1440 900 [modes]`
 //!
-//! With `demo`, opens the demo project with a clip selected and the playhead
-//! inside it.
+//! Modes, comma-separated:
+//! - `demo`: the demo project with a clip selected and the playhead inside it
+//! - `settings`, `about`: open that dialog
+//! - `splash@0.4`: the launch splash frozen 0.4 s in
+//!
+//! Animations are off (end states) except in `splash@` mode.
 //!
 //! Needs GPUI's headless renderer (WGPU on Linux, Metal on macOS).
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use gpui::{
     AppContext as _, Bounds, HeadlessAppContext, WindowBounds, WindowOptions, point, px, size,
 };
-use videode_app::workspace::Workspace;
+use videode_app::workspace::{Modal, Workspace};
 use videode_core::{ClipId, Document, demo::demo_project};
 
 fn main() -> anyhow::Result<()> {
@@ -19,7 +24,17 @@ fn main() -> anyhow::Result<()> {
     let out = args.next().unwrap_or_else(|| "videode.png".into());
     let width: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1440.);
     let height: f32 = args.next().and_then(|s| s.parse().ok()).unwrap_or(900.);
-    let demo = args.next().as_deref() == Some("demo");
+    let modes = args.next().unwrap_or_default();
+    let has = |m: &str| modes.split(',').any(|x| x == m);
+    let demo = has("demo");
+    let splash: Option<f32> = modes
+        .split(',')
+        .find_map(|m| m.strip_prefix("splash@").and_then(|s| s.parse().ok()));
+
+    // Never read or write the user's real settings.
+    let config = std::env::temp_dir().join("videode-snapshot-config");
+    // SAFETY: set before any other thread starts.
+    unsafe { std::env::set_var("VIDEODE_CONFIG_DIR", &config) };
 
     let mut cx = HeadlessAppContext::with_platform(
         gpui_platform::current_platform(true).text_system(),
@@ -27,6 +42,7 @@ fn main() -> anyhow::Result<()> {
         gpui_platform::current_headless_renderer,
     );
     cx.update(videode_app::init);
+    cx.update(|cx| cx.set_reduce_motion(splash.is_none()));
 
     let (handle, _) = cx.update(|cx| {
         gpui_kit::open_window(
@@ -42,18 +58,29 @@ fn main() -> anyhow::Result<()> {
             cx,
             |window, cx| {
                 cx.new(|cx| {
-                    if !demo {
-                        return Workspace::new(window, cx);
+                    let mut ws = if demo {
+                        let project = demo_project();
+                        let selected: Option<ClipId> = project
+                            .sequence
+                            .clips
+                            .iter()
+                            .find(|c| c.nodes.len() >= 3 && c.media.is_some())
+                            .map(|c| c.id);
+                        let mut ws =
+                            Workspace::with_document(Document::new(project, None), window, cx);
+                        ws.set_view(240, selected);
+                        ws
+                    } else {
+                        Workspace::new(window, cx)
+                    };
+                    if has("settings") {
+                        ws.show_modal(Modal::Settings);
+                    } else if has("about") {
+                        ws.show_modal(Modal::About);
                     }
-                    let project = demo_project();
-                    let selected: Option<ClipId> = project
-                        .sequence
-                        .clips
-                        .iter()
-                        .find(|c| c.nodes.len() >= 3 && c.media.is_some())
-                        .map(|c| c.id);
-                    let mut ws = Workspace::with_document(Document::new(project, None), window, cx);
-                    ws.set_view(240, selected);
+                    if let Some(t) = splash {
+                        ws.preview_splash(Duration::from_secs_f32(t));
+                    }
                     ws
                 })
             },

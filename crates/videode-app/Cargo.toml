@@ -15,10 +15,27 @@ path = "src/main.rs"
 videode-core.workspace = true
 gpui-kit.workspace = true
 anyhow.workspace = true
+dirs = "6"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+# Embeds assets/brand/videode.ico in videode.exe (see build.rs).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 [dev-dependencies]
 # Headless rendering for screenshot snapshots. Enabled on GPUI directly because
 # gpui-kit's own `test-support` pulls in gpui-fast, which conflicts on macOS deps.
 gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.9", features = ["test-support"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Read by cargo-bundle for the macOS .app. The .icns is a placeholder until the
+# Icon Composer (Liquid Glass) icon lands.
+[package.metadata.bundle]
+name = "videode"
+identifier = "dev.videode.videode"
+icon = ["../../assets/brand/videode.icns", "../../assets/brand/png/videode-256.png"]
+category = "public.app-category.video"
+short_description = "A video editor where everything is a node"

@@ -1,4 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0891b2"/>
-  <text x="32" y="32" dy="0.35em" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#ffffff">V</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>videode</title>
+  <!-- The Merge mark: picture (cyan) and sound (magenta) ports flow into one
+       Output node (blue). Layers are named for Icon Composer import. -->
+  <g id="tile">
+    <rect width="1024" height="1024" rx="228" fill="#111113"/>
+    <rect x="6" y="6" width="1012" height="1012" rx="222" fill="none" stroke="#2f2f35" stroke-width="12"/>
+  </g>
+  <g id="wires" fill="none" stroke="#f1ede0" stroke-width="64" stroke-linecap="round">
+    <path d="M300 300 C 300 520, 512 560, 512 724"/>
+    <path d="M724 300 C 724 520, 512 560, 512 724"/>
+  </g>
+  <g id="ports" fill="#111113" stroke-width="44">
+    <circle cx="300" cy="300" r="74" stroke="#3cc4c4"/>
+    <circle cx="724" cy="300" r="74" stroke="#c43cc4"/>
+  </g>
+  <g id="output">
+    <rect x="402" y="648" width="220" height="152" rx="34" fill="#4a62d0"/>
+    <rect x="402" y="648" width="220" height="26" rx="13" fill="#6f84e6" opacity=".55"/>
+  </g>
 </svg>
