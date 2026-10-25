@@ -6,18 +6,20 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase, FontWeight, Hsla,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollWheelEvent, SharedString, Window, canvas, div, point, px,
+    AnimationExt as _, AnyElement, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase,
+    FontWeight, Hsla, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, ScrollWheelEvent, SharedString, Window, canvas, div, point, px,
 };
 use videode_core::{
     Clip, ClipId, ClipKind, Frame, NodeKind, StreamKind, Track, TrackId, snap, time,
 };
 
 use crate::actions::{Split, ZoomIn, ZoomOut, ZoomToFit};
+use crate::motion::{self, anim, ease_out, key, lerp};
 use crate::theme::{self, CategoryExt, c, hex};
 use crate::ui::{self, ghost_button, icon_button, tip};
 use crate::workspace::{Tool, Workspace};
@@ -53,6 +55,13 @@ pub(crate) enum Drag {
     Scrub,
 }
 
+/// View (pixels per frame, scroll) moving from `from` to `to`.
+pub(crate) struct ZoomTween {
+    from: (f32, f32),
+    to: (f32, f32),
+    started: Instant,
+}
+
 pub(crate) struct TimelineState {
     /// Pixels per frame.
     pub ppf: f32,
@@ -61,6 +70,8 @@ pub(crate) struct TimelineState {
     pub drag: Option<Drag>,
     pub snap_line: Option<Frame>,
     pub hover_frame: Option<Frame>,
+    /// An eased zoom in progress (keyboard, buttons and fit only).
+    pub zoom: Option<ZoomTween>,
     /// Lanes area in window coordinates, captured each frame.
     pub bounds: Rc<Cell<Bounds<Pixels>>>,
 }
@@ -73,6 +84,7 @@ impl Default for TimelineState {
             fit_pending: true,
             drag: None,
             snap_line: None,
+            zoom: None,
             hover_frame: None,
             bounds: Rc::default(),
         }
@@ -185,18 +197,56 @@ impl Workspace {
         self.clamp_scroll();
     }
 
-    pub(crate) fn zoom_around_playhead(&mut self, factor: f32) {
-        let x = self
-            .frame_x(self.playhead)
-            .clamp(0., self.lanes_width().max(0.));
-        self.zoom_at(factor, x);
+    /// Runs `f` against the view a running zoom is heading to (so repeated
+    /// presses accumulate), then eases or jumps to the result.
+    fn retarget(&mut self, animate: bool, f: impl FnOnce(&mut Self)) {
+        let shown = (self.tl.ppf, self.tl.scroll_x);
+        if let Some(z) = self.tl.zoom.take() {
+            (self.tl.ppf, self.tl.scroll_x) = z.to;
+        }
+        f(self);
+        let to = (self.tl.ppf, self.tl.scroll_x);
+        if animate && to != shown {
+            (self.tl.ppf, self.tl.scroll_x) = shown;
+            self.tl.zoom = Some(ZoomTween {
+                from: shown,
+                to,
+                started: Instant::now(),
+            });
+        }
     }
 
-    fn fit(&mut self) {
-        let w = self.lanes_width();
-        let end = self.project().end().max(30 * self.fps().nominal());
-        self.tl.ppf = ((w - 40.) / end as f32).clamp(MIN_PPF, MAX_PPF);
-        self.tl.scroll_x = 0.;
+    pub(crate) fn zoom_around_playhead(&mut self, factor: f32, animate: bool) {
+        self.retarget(animate, |this| {
+            let x = this
+                .frame_x(this.playhead)
+                .clamp(0., this.lanes_width().max(0.));
+            this.zoom_at(factor, x);
+        });
+    }
+
+    pub(crate) fn fit(&mut self, animate: bool) {
+        self.retarget(animate, |this| {
+            let w = this.lanes_width();
+            let end = this.project().end().max(30 * this.fps().nominal());
+            this.tl.ppf = ((w - 40.) / end as f32).clamp(MIN_PPF, MAX_PPF);
+            this.tl.scroll_x = 0.;
+        });
+    }
+
+    fn tick_zoom(&mut self, window: &mut Window) {
+        let Some(z) = &self.tl.zoom else {
+            return;
+        };
+        let t = z.started.elapsed().as_secs_f32() / motion::ZOOM.as_secs_f32();
+        let e = ease_out(t);
+        self.tl.ppf = lerp(z.from.0, z.to.0, e);
+        self.tl.scroll_x = lerp(z.from.1, z.to.1, e);
+        if t >= 1. {
+            self.tl.zoom = None;
+        } else {
+            window.request_animation_frame();
+        }
     }
 
     pub(crate) fn cancel_drag(&mut self) {
@@ -231,6 +281,7 @@ impl Workspace {
                     if self.apply("split", cx, |p| p.split(id, at)).is_some() {
                         let tc = self.tc(at);
                         self.say(format!("Cut at {tc} · {} to undo", ui::cmd_key("Z")));
+                        self.flash_cut(at);
                     }
                     return;
                 }
@@ -374,6 +425,10 @@ impl Workspace {
     }
 
     fn wheel(&mut self, e: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        // The wheel is direct manipulation: it takes over from any eased zoom.
+        if let Some(z) = self.tl.zoom.take() {
+            (self.tl.ppf, self.tl.scroll_x) = z.to;
+        }
         let delta = e.delta.pixel_delta(px(20.));
         let (dx, dy) = (f32::from(delta.x), f32::from(delta.y));
         if e.modifiers.secondary() {
@@ -395,12 +450,14 @@ impl Workspace {
     ) -> impl IntoElement + use<> {
         if self.tl.fit_pending {
             if self.lanes_width() > 0. {
-                self.fit();
+                self.fit(false);
                 self.tl.fit_pending = false;
             } else {
                 window.request_animation_frame();
             }
         }
+
+        self.tick_zoom(window);
 
         let tracks: Vec<Track> = self.project().sequence.tracks.clone();
         let lanes_h: f32 = tracks.iter().map(track_height).sum();
@@ -799,6 +856,21 @@ impl Workspace {
         {
             children.push(vline(self.frame_x(f), lanes_h, c(0xd0463f)).into_any_element());
         }
+        if let Some((f, seq)) = self.fx.cut {
+            let x = self.frame_x(f);
+            children.push(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(px(x - 1.))
+                    .w(px(3.))
+                    .h(px(lanes_h))
+                    .bg(c(0xd0463f))
+                    .opacity(0.)
+                    .with_animation(key("cut", seq), anim(motion::CUT), |d, t| d.opacity(1. - t))
+                    .into_any_element(),
+            );
+        }
         let ph = self.frame_x(self.playhead);
         if ph >= 0. && ph <= w {
             children.push(vline(ph, lanes_h, c(hex::BONE)).into_any_element());
@@ -864,6 +936,12 @@ impl Workspace {
     ) -> impl IntoElement + use<> {
         let p = self.project();
         let selected = self.selection == Some(clip.id);
+        let flash = self
+            .fx
+            .flash
+            .as_ref()
+            .filter(|(ids, _)| ids.contains(&clip.id))
+            .map(|(_, seq)| *seq);
         let media = clip.media.and_then(|m| p.media(m));
         let offline = media.is_some_and(|m| m.offline);
         let muted = !track.enabled;
@@ -980,6 +1058,22 @@ impl Workspace {
                             .when(n.bypass, |d| d.opacity(0.25))
                     })),
             )
+            .children(flash.map(|seq| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .rounded(px(3.))
+                    .border_2()
+                    .border_color(c(hex::BONE))
+                    .opacity(0.)
+                    .with_animation(
+                        key(format!("flash-{}", clip.id.0), seq),
+                        anim(motion::FLASH),
+                        |d, t| d.opacity(1. - t),
+                    )
+            }))
             .child(edge_handle(true))
             .child(edge_handle(false))
     }

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="160" viewBox="0 0 560 160">
+  <title>videode lockup (light)</title>
+  <!-- Wordmark is Geist SemiBold, tracked -2.5%. The PNG export is the reference. -->
+  <rect width="560" height="160" fill="#f1ede0"/>
+  <svg x="32" y="32" width="96" height="96" viewBox="0 0 1024 1024">
+    <rect width="1024" height="1024" rx="228" fill="#111113"/>
+    <rect x="6" y="6" width="1012" height="1012" rx="222" fill="none" stroke="#2f2f35" stroke-width="12"/>
+    <g fill="none" stroke="#f1ede0" stroke-width="64" stroke-linecap="round"><path d="M300 300 C 300 520, 512 560, 512 724"/><path d="M724 300 C 724 520, 512 560, 512 724"/></g>
+    <g fill="#111113" stroke-width="44"><circle cx="300" cy="300" r="74" stroke="#3cc4c4"/><circle cx="724" cy="300" r="74" stroke="#c43cc4"/></g>
+    <rect x="402" y="648" width="220" height="152" rx="34" fill="#4a62d0"/>
+  </svg>
+  <text x="156" y="104" font-family="Geist" font-weight="600" font-size="72" letter-spacing="-1.8" fill="#111113">videode</text>
+</svg>

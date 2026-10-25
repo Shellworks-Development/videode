@@ -38,6 +38,8 @@ actions!(
         GoToStart,
         GoToEnd,
         Export,
+        OpenSettings,
+        About,
     ]
 );
 
@@ -55,6 +57,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-z", Redo, ctx),
         KeyBinding::new("secondary-y", Redo, ctx),
         KeyBinding::new("secondary-e", Export, ctx),
+        KeyBinding::new("secondary-,", OpenSettings, ctx),
         KeyBinding::new("s", Split, ctx),
         KeyBinding::new("delete", DeleteClip, ctx),
         KeyBinding::new("backspace", DeleteClip, ctx),

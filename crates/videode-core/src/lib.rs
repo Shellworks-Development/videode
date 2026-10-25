@@ -8,6 +8,7 @@ pub mod graph;
 pub mod kdl_io;
 pub mod node;
 pub mod project;
+pub mod settings;
 pub mod time;
 
 pub use document::Document;
@@ -16,4 +17,5 @@ pub use node::{
     Category, ClipKind, Node, NodeId, NodeKind, ParamKind, ParamSpec, StreamKind, Value,
 };
 pub use project::{Clip, ClipId, Media, MediaId, MediaKind, Project, Track, TrackId};
+pub use settings::{Animations, Settings};
 pub use time::{Fps, Frame};

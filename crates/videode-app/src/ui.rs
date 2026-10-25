@@ -4,6 +4,7 @@ use gpui_kit::component::{Icon, tooltip::Tooltip};
 use gpui_kit::prelude::*;
 use gpui_kit::{Div, FontWeight, Hsla, Pixels, SharedString, Stateful, div, px};
 
+use crate::motion::hover_fx;
 use crate::theme::{self, Category, CategoryExt, c, hex};
 
 pub fn cmd_key(key: &str) -> SharedString {
@@ -84,8 +85,9 @@ pub fn icon_button(
     pressed: bool,
     disabled: bool,
 ) -> Stateful<Div> {
-    div()
-        .id(id.into())
+    let id = id.into();
+    let el = div()
+        .id(id.clone())
         .w(px(28.))
         .h(px(26.))
         .flex_none()
@@ -95,16 +97,25 @@ pub fn icon_button(
         .rounded(px(5.))
         .text_color(c(if pressed { hex::INK } else { hex::INK_DIM }))
         .when(pressed, |d| d.bg(c(hex::PLUGE_HOVER)))
-        .when(disabled, |d| d.opacity(0.35))
-        .when(!disabled, |d| {
-            d.cursor_pointer()
-                .hover(|s| s.bg(c(hex::PLUGE_CONTROL)).text_color(c(hex::INK)))
-        })
-        .child(
-            Icon::empty()
-                .path(SharedString::from(format!("icons/{icon_name}.svg")))
-                .size(px(16.)),
-        )
+        .when(disabled, |d| d.opacity(0.35));
+    let el = if disabled {
+        el
+    } else {
+        let hot = c(if pressed {
+            hex::PLUGE_HOVER
+        } else {
+            hex::PLUGE_CONTROL
+        });
+        hover_fx(el, id, hot, px(5.))
+            .cursor_pointer()
+            .hover(|s| s.text_color(c(hex::INK)))
+            .active(|s| s.opacity(0.75))
+    };
+    el.child(
+        Icon::empty()
+            .path(SharedString::from(format!("icons/{icon_name}.svg")))
+            .size(px(16.)),
+    )
 }
 
 pub fn button(
@@ -118,8 +129,14 @@ pub fn button(
     } else {
         (hex::PLUGE_RAISED, hex::INK, hex::LINE_STRONG)
     };
-    div()
-        .id(id.into())
+    let id = id.into();
+    let hot = c(if primary {
+        0xfffaf0
+    } else {
+        hex::PLUGE_CONTROL
+    });
+    let el = div()
+        .id(id.clone())
         .h(px(26.))
         .px(px(10.))
         .flex()
@@ -132,14 +149,9 @@ pub fn button(
         .bg(c(bg))
         .text_color(c(fg))
         .cursor_pointer()
-        .when(primary, |d| d.font_weight(FontWeight::MEDIUM))
-        .hover(move |s| {
-            s.bg(c(if primary {
-                0xfffaf0
-            } else {
-                hex::PLUGE_CONTROL
-            }))
-        })
+        .active(|s| s.opacity(0.75))
+        .when(primary, |d| d.font_weight(FontWeight::MEDIUM));
+    hover_fx(el, id, hot, px(4.))
         .when_some(icon_name, |d, name| d.child(icon(name, px(16.), c(fg))))
         .child(label.into())
 }
@@ -150,8 +162,9 @@ pub fn ghost_button(
     label: &'static str,
     key: Option<&'static str>,
 ) -> Stateful<Div> {
-    div()
-        .id(id.into())
+    let id = id.into();
+    let el = div()
+        .id(id.clone())
         .h(px(26.))
         .px(px(8.))
         .flex()
@@ -161,7 +174,9 @@ pub fn ghost_button(
         .rounded(px(5.))
         .text_color(c(hex::INK_DIM))
         .cursor_pointer()
-        .hover(|s| s.bg(c(hex::PLUGE_CONTROL)).text_color(c(hex::INK)))
+        .hover(|s| s.text_color(c(hex::INK)))
+        .active(|s| s.opacity(0.75));
+    hover_fx(el, id, c(hex::PLUGE_CONTROL), px(5.))
         .child(icon(icon_name, px(16.), c(hex::INK_DIM)))
         .child(label)
         .when_some(key, |d, k| d.child(kbd(k)))

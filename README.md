@@ -23,6 +23,9 @@ Requires a recent stable Rust toolchain.
 cargo run -p videode-app            # opens the editor
 cargo run -p videode-app --example snapshot -- out.png 1440 900        # offscreen screenshot
 cargo run -p videode-app --example snapshot -- out.png 1440 900 demo   # same, demo project
+                                                                      # (also: settings, about, splash@0.4)
+./scripts/brand.sh                     # regenerate icons from assets/brand/*.svg
+./packaging/linux/install.sh           # install binary, launcher and icons to ~/.local
 ```
 
 Linux needs the usual GPUI system libraries (Debian/Ubuntu):

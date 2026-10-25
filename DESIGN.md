@@ -164,6 +164,37 @@ Pills are used only for the track pin in peek.
 - **Command palette:** results grouped as Recent, Actions, Add node, Clips and Media. Fuzzy matches are highlighted in bone. Disabled items say why they're unavailable.
 - **Buttons:** there is one primary button (bone, for Export/Render). Default buttons are raised. Ghost buttons sit in toolbars. Every tooltip shows its shortcut as a keycap.
 
+## Brand
+
+**The Merge mark.** A lowercase v drawn as a node graph: a picture port (`bar-look` cyan) and a sound port (`bar-audio` magenta) flow down bone wires into one Output node (`bar-output` blue), on a `pluge-black` tile with a 228/1024 corner radius. It is the one place bar colours appear outside node identity, and they keep their meaning there.
+
+- Masters live in `assets/brand/`: `videode.svg` (layered `tile`/`wires`/`ports`/`output` for Icon Composer), `videode-small.svg` (heavier strokes, tighter crop, for 16–32px), `videode-glyph.svg` (no tile) and the two lockups. `scripts/brand.sh` regenerates every PNG, the `.ico` and the `.icns`.
+- In the app, the mark is painted natively (`brand.rs`) so it is crisp at any size and can build in.
+- The wordmark is Geist SemiBold, lowercase, tracked −2.5%. Brand surfaces (About, splash) may set it at 24–36px; this is the only exception to the Two-Size Rule.
+- The macOS `.icns` is a placeholder until a Liquid Glass icon is made in Icon Composer.
+
+## Motion
+
+Motion explains what changed. It never delays input and never sits between a keystroke and its result.
+
+| What | How | Time |
+|---|---|---|
+| Hover | background layer fades in under the control | 120ms in, 90ms out |
+| Press | control dims to 75% while held | instant |
+| Menus, tooltips | fade and drop in (GPUI Kit) | 150ms |
+| Dialogs | backdrop fades, panel rises 10px | 160ms |
+| Status message | rises 6px and fades in | 180ms |
+| Keyboard/button zoom, fit | eases to the new scale | 180ms |
+| Split, blade | red cut line fades out at the cut | 380ms |
+| Undo, redo | changed clips get a bone ring that fades | 520ms |
+| Switches | knob slides | 140ms |
+| Launch splash | ports pop, wires draw, node drops, wordmark slides; any key skips | 1.3s |
+| About | the mark builds in | 700ms |
+
+- **One curve.** Ease-out quint (`motion::ease_out`), the native stand-in for `cubic-bezier(.16,1,.3,1)`. Leaving is faster than arriving.
+- **No motion on direct manipulation.** Drag, trim, scrub, wheel zoom, playback and meters are never eased; the wheel cancels an eased zoom.
+- **One switch.** Settings › Animations is Follow system (default), On or Off, and drives GPUI's `reduce_motion`. Every animation goes through `with_animation` or checks `settings::motion`, so Off shows end states immediately and the splash is skipped. Follow system reads GNOME/KDE settings on Linux, Reduce Motion on macOS and "Show animations" on Windows.
+
 ## Do's and Don'ts
 
 - Do show every action's shortcut where the action lives (tooltip, menu, palette).
@@ -172,3 +203,4 @@ Pills are used only for the track pin in peek.
 - Don't add a third type size to the shell.
 - Don't use side-stripe accents on list rows; use the 8px category swatch.
 - Don't hide the transport behind floating panels.
+- Don't add an animation that has no instant end state, or that runs while the user is dragging.
