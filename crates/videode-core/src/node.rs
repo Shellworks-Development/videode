@@ -131,6 +131,45 @@ impl ParamSpec {
         }
     }
 
+    /// Parses typed input. Numbers accept `−` or `-`, a leading `+` and a
+    /// trailing unit; choices match case-insensitively. The result still goes
+    /// through [`Self::validate`] when it is set.
+    pub fn parse(&self, text: &str) -> Option<Value> {
+        let t = text.trim();
+        match self.kind {
+            ParamKind::Number { .. } => {
+                let t = t.replace('−', "-");
+                let t = t
+                    .trim_end_matches(|c: char| !(c.is_ascii_digit() || c == '.'))
+                    .trim();
+                let t = t.strip_prefix('+').unwrap_or(t);
+                t.parse::<f64>()
+                    .ok()
+                    .filter(|n| n.is_finite())
+                    .map(Value::Number)
+            }
+            ParamKind::Text { .. } => Some(Value::Text(text.to_string())),
+            ParamKind::Choice { options, .. } => options
+                .iter()
+                .find(|o| o.eq_ignore_ascii_case(t))
+                .map(|o| Value::Text((*o).to_string())),
+        }
+    }
+
+    /// A number moved by `steps` increments of its step, clamped to range.
+    pub fn nudge(&self, value: &Value, steps: f64) -> Option<Value> {
+        match (self.kind, value) {
+            (ParamKind::Number { step, .. }, Value::Number(n)) => {
+                self.validate(Value::Number(n + steps * step)).ok()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn is_default(&self, value: &Value) -> bool {
+        *value == self.default_value()
+    }
+
     /// Display string with units, e.g. `+0.35 EV`, `108 %`.
     pub fn format(&self, value: &Value) -> String {
         match (self.kind, value) {
@@ -545,5 +584,31 @@ mod tests {
         for k in NodeKind::ALL {
             assert_eq!(NodeKind::from_ident(k.ident()), Some(k));
         }
+    }
+
+    #[test]
+    fn parses_typed_values() {
+        let exposure = NodeKind::Grade.param("exposure").unwrap();
+        assert_eq!(exposure.parse("+0.35 EV"), Some(Value::Number(0.35)));
+        assert_eq!(exposure.parse("−1.5"), Some(Value::Number(-1.5)));
+        assert_eq!(exposure.parse(" 2ev "), Some(Value::Number(2.0)));
+        assert_eq!(exposure.parse("bright"), None);
+        let scale = NodeKind::Transform.param("scale").unwrap();
+        assert_eq!(scale.parse("108 %"), Some(Value::Number(108.0)));
+        let blend = NodeKind::Opacity.param("blend").unwrap();
+        assert_eq!(blend.parse("screen"), Some(Value::Text("Screen".into())));
+        assert_eq!(blend.parse("glow"), None);
+    }
+
+    #[test]
+    fn nudges_by_step_within_range() {
+        let exposure = NodeKind::Grade.param("exposure").unwrap();
+        let v = exposure.nudge(&Value::Number(0.0), 3.0).unwrap();
+        assert!(!exposure.is_default(&v));
+        let huge = exposure.nudge(&Value::Number(0.0), 1e9).unwrap();
+        let ParamKind::Number { max, .. } = exposure.kind else {
+            unreachable!()
+        };
+        assert_eq!(huge, Value::Number(max));
     }
 }

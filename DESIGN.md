@@ -159,9 +159,10 @@ Pills are used only for the track pin in peek.
 
 - **Clip:** has a name row (17px), a filmstrip or waveform, and a 5px **chain strip** along the bottom with one segment per node in category colour. Bypassed segments drop to 25% opacity. Clips have 7px trim handles on each edge. Fades are shown as darkened corner triangles.
 - **Node:** 136px wide, with a 4px category cap, the title at 600 weight, and a one-line mono summary. In/out ports are 9px rings. A bypassed node gets a dashed border and a struck title.
-- **Peek panel:** opens directly below the clip when there is room, otherwise above it, and never covers the transport. It unfolds from the chain strip's rectangle with a 300ms `cubic-bezier(.16,1,.3,1)` motion. The nodes inside stagger in at 35ms intervals.
+- **Peek panel:** opens directly below the clip when there is room, otherwise above it, and never covers the transport. It unfolds with a 300ms ease-out (GPUI can't transform elements, so the panel grows in height rather than scaling from the chain strip). The nodes inside stagger in at 35ms intervals. Dragging a card shows a bone insertion line; the generator's slot is fixed.
 - **Inspector section:** an 8px swatch, the node name, and bypass and remove buttons. Params use a 96px label column. Dragging the label scrubs the value; Shift multiplies the step by 10 and Alt divides it by 10. Double-clicking the label resets it.
 - **Command palette:** results grouped as Recent, Actions, Add node, Clips and Media. Fuzzy matches are highlighted in bone. Disabled items say why they're unavailable.
+- **Typing safety:** single-key shortcuts are bound under `Workspace && !Input`, so they never fire while a text field or the palette has focus.
 - **Buttons:** there is one primary button (bone, for Export/Render). Default buttons are raised. Ghost buttons sit in toolbars. Every tooltip shows its shortcut as a keycap.
 
 ## Brand

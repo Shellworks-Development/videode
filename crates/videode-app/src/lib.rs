@@ -4,9 +4,15 @@ pub mod actions;
 pub mod assets;
 mod brand;
 mod dialogs;
+mod graph_view;
+mod inspector;
 mod motion;
+mod palette;
 mod panels;
+mod peek;
 pub mod settings;
+#[cfg(test)]
+mod tests;
 pub mod theme;
 mod timeline;
 mod ui;

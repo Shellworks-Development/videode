@@ -14,13 +14,12 @@ use crate::actions::*;
 use crate::brand;
 use crate::motion::{self, anim, hover_fx, key, lerp};
 use crate::theme::{self, Category, CategoryExt, c, hex};
-use crate::ui::{button, cmd_key, field_row, icon, icon_button, kbd, pane_header, swatch, tip};
-use crate::workspace::{BinTab, Workspace};
+use crate::ui::{button, cmd_key, icon, icon_button, kbd, pane_header, swatch, tip};
+use crate::workspace::{BinTab, View, Workspace};
 
 const TOP_BAR_H: f32 = 38.;
 const STATUS_H: f32 = 26.;
 const BIN_W: f32 = 264.;
-const INSPECTOR_W: f32 = 304.;
 
 type MenuBuilder = fn(PopupMenu, &Workspace) -> PopupMenu;
 
@@ -59,6 +58,14 @@ fn edit_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
 fn clip_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
     let none = ws.selection.is_none();
     m.menu("Split at playhead", Box::new(Split))
+        .menu_with_disabled("Peek at nodes", Box::new(TogglePeek), none)
+        .menu_with_disabled("Add node…", Box::new(AddNodeMenu), none)
+        .menu_with_disabled(
+            "Bypass or enable node",
+            Box::new(BypassNode),
+            ws.focused_node().is_none(),
+        )
+        .separator()
         .menu_with_disabled("Delete", Box::new(DeleteClip), none)
         .menu_with_disabled("Ripple delete", Box::new(RippleDelete), none)
         .separator()
@@ -77,6 +84,9 @@ fn view_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
         Box::new(BladeTool),
     )
     .menu_with_check("Snapping", ws.snap, Box::new(ToggleSnap))
+    .separator()
+    .menu_with_check("Graph view", ws.view == View::Graph, Box::new(ToggleGraph))
+    .menu("Command palette", Box::new(CommandPalette))
     .separator()
     .menu("Zoom in", Box::new(ZoomIn))
     .menu("Zoom out", Box::new(ZoomOut))
@@ -167,7 +177,34 @@ impl Workspace {
                     .text_color(c(hex::INK))
                     .font_weight(FontWeight::MEDIUM)
                     .child(SharedString::from(format!("{} Sequence", p.sequence.name))),
-            );
+            )
+            .map(|d| {
+                let tail = match (
+                    self.view,
+                    self.peek,
+                    self.selection.and_then(|id| p.clip(id)),
+                ) {
+                    (View::Graph, ..) => Some(("Graph".to_string(), None)),
+                    (View::Timeline, Some(_), Some(clip)) => {
+                        Some((p.clip_name(clip), Some("nodes")))
+                    }
+                    _ => None,
+                };
+                match tail {
+                    Some((name, suffix)) => d
+                        .child(icon("chevron-right", px(12.), c(hex::INK_FAINT)))
+                        .child(
+                            div()
+                                .text_color(c(hex::INK))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(name),
+                        )
+                        .when_some(suffix, |d, s| {
+                            d.child(div().text_color(c(hex::INK_FAINT)).child(s))
+                        }),
+                    None => d,
+                }
+            });
 
         let command = div()
             .id("command-palette")
@@ -189,12 +226,7 @@ impl Workspace {
             .map(|d| hover_fx(d, "command-palette", c(hex::PLUGE_RAISED), px(5.)))
             .hover(|s| s.text_color(c(hex::INK)))
             .tooltip(tip("Every action, node and clip", Some(cmd_key("K"))))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.say(
-                    "The command palette arrives with the node views (M2) · use the menus for now",
-                );
-                cx.notify();
-            }))
+            .on_click(|_, w, cx| w.dispatch_action(Box::new(CommandPalette), cx))
             .child(icon("search", px(16.), c(hex::INK_DIM)))
             .child(
                 div()
@@ -274,10 +306,10 @@ impl Workspace {
 
     /* ---------- bin ---------- */
 
-    fn add_media_at_playhead(&mut self, media: MediaId, cx: &mut Context<Self>) {
+    pub(crate) fn add_media_at_playhead(&mut self, media: MediaId, cx: &mut Context<Self>) {
         let at = self.playhead;
         if let Some(id) = self.apply("add clip", cx, |p| p.add_media_clip(media, None, at)) {
-            self.selection = Some(id);
+            self.select(Some(id));
             let p = self.project();
             if let Some(clip) = p.clip(id) {
                 let track = p
@@ -793,178 +825,6 @@ impl Workspace {
             .child(transport)
     }
 
-    /* ---------- inspector ---------- */
-
-    pub(crate) fn render_inspector(&self) -> impl IntoElement + use<> {
-        let body = match self.selection.and_then(|id| self.project().clip(id)) {
-            Some(clip) => self.clip_inspector(clip),
-            None => self.sequence_inspector(),
-        };
-        div()
-            .w(px(INSPECTOR_W))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(c(hex::PLUGE_BLACK))
-            .border_l_1()
-            .border_color(c(hex::LINE))
-            .child(
-                pane_header().child(
-                    div()
-                        .h(px(24.))
-                        .px(px(9.))
-                        .flex()
-                        .items_center()
-                        .rounded(px(5.))
-                        .bg(c(hex::PLUGE_CONTROL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child("Inspector"),
-                ),
-            )
-            .child(
-                div()
-                    .id("inspector-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(body),
-            )
-    }
-
-    fn sequence_inspector(&self) -> AnyElement {
-        let p = self.project();
-        let seq = &p.sequence;
-        let o = &p.output;
-        let hint = |text: &'static str, key: SharedString| {
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .child(text)
-                .child(kbd(key))
-        };
-        let clips = seq.clips.len();
-        div()
-            .child(title_block(
-                format!("{} Sequence", seq.name),
-                if clips == 0 {
-                    "Sequence node · empty".into()
-                } else {
-                    format!("Sequence node · {clips} clips · {} nodes", p.node_count())
-                },
-            ))
-            .child(section(
-                Category::Composite,
-                "Sequence",
-                None,
-                vec![
-                    field_row(
-                        "Resolution",
-                        format!("{} × {}", seq.width, seq.height),
-                        true,
-                    ),
-                    field_row("Frame rate", seq.fps.to_string(), true),
-                    field_row("Duration", self.tc(p.end()), true),
-                    field_row("Color space", "Rec.709 · gamma 2.4", false),
-                ],
-            ))
-            .child(section(
-                Category::Output,
-                "Output",
-                None,
-                vec![
-                    field_row("Format", format!("{} · {}", o.container, o.codec), false),
-                    field_row("Resolution", o.resolution.clone(), true),
-                    field_row("Quality", o.quality.clone(), false),
-                    field_row("File", o.path.clone(), true),
-                ],
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(14.))
-                    .text_color(c(hex::INK_DIM))
-                    .child(hint("Select a clip to see its nodes", "click".into()))
-                    .child(hint("Split at the playhead", "S".into()))
-                    .child(hint("Cut with the blade", "B".into()))
-                    .child(hint("Play, shuttle, stop", "J K L".into())),
-            )
-            .into_any_element()
-    }
-
-    fn clip_inspector(&self, clip: &Clip) -> AnyElement {
-        let p = self.project();
-        let fps = p.sequence.fps;
-        let track = p
-            .track(clip.track)
-            .map(|t| t.label.clone())
-            .unwrap_or_default();
-        let kind = match clip.kind {
-            ClipKind::Video => "Video clip",
-            ClipKind::Audio => "Audio clip",
-            ClipKind::Text => "Text clip",
-        };
-        let media = clip.media.and_then(|m| p.media(m));
-        let mut clip_rows = vec![
-            field_row("Start", time::timecode(clip.start, fps), true),
-            field_row("End", time::timecode(clip.end(), fps), true),
-            field_row("Duration", time::timecode(clip.duration, fps), true),
-        ];
-        if let Some(m) = media {
-            clip_rows.push(field_row(
-                "Source in",
-                time::timecode(clip.source_in, fps),
-                true,
-            ));
-            clip_rows.push(field_row("File", m.file_name(), true));
-        }
-
-        let mut root = div()
-            .child(title_block(
-                p.clip_name(clip),
-                format!("{kind} · {track} · {} nodes", clip.nodes.len()),
-            ))
-            .child(section(Category::Source, "Clip", None, clip_rows));
-
-        for node in &clip.nodes {
-            let rows = node
-                .kind
-                .params()
-                .iter()
-                .map(|spec| {
-                    let value = node
-                        .get(spec.key)
-                        .map(|v| spec.format(v))
-                        .unwrap_or_default();
-                    let mono = !matches!(spec.kind, videode_core::ParamKind::Text { .. });
-                    field_row(spec.label, value, mono)
-                })
-                .collect::<Vec<_>>();
-            let rows = if rows.is_empty() {
-                vec![div().text_color(c(hex::INK_FAINT)).child(match media {
-                    Some(m) => format!("{} · {}", m.codec, m.format),
-                    None => kind.to_string(),
-                })]
-            } else {
-                rows
-            };
-            let note = node.bypass.then_some("bypassed");
-            root = root.child(section(node.kind.category(), node.kind.name(), note, rows));
-        }
-        root.child(
-            div()
-                .px(px(12.))
-                .py(px(12.))
-                .text_color(c(hex::INK_FAINT))
-                .child("Values become editable with the node views in M2. Add nodes from the Nodes tab."),
-        )
-        .into_any_element()
-    }
-
     /* ---------- status bar ---------- */
 
     pub(crate) fn render_status_bar(&self) -> impl IntoElement + use<> {
@@ -1023,50 +883,4 @@ impl Workspace {
                     .child(format!("{}×{} · {}", seq.width, seq.height, seq.fps)),
             )
     }
-}
-
-fn title_block(title: String, subtitle: String) -> impl IntoElement {
-    div()
-        .px(px(12.))
-        .pt(px(12.))
-        .pb(px(10.))
-        .border_b_1()
-        .border_color(c(hex::LINE))
-        .child(
-            div()
-                .text_size(theme::TITLE)
-                .font_weight(FontWeight::SEMIBOLD)
-                .whitespace_nowrap()
-                .overflow_hidden()
-                .text_ellipsis()
-                .child(title),
-        )
-        .child(div().text_color(c(hex::INK_DIM)).child(subtitle))
-}
-
-fn section(
-    cat: Category,
-    title: &'static str,
-    note: Option<&'static str>,
-    rows: Vec<gpui_kit::Div>,
-) -> impl IntoElement {
-    div()
-        .border_b_1()
-        .border_color(c(hex::LINE))
-        .when(note.is_some(), |d| d.opacity(0.55))
-        .child(
-            div()
-                .h(px(34.))
-                .flex()
-                .items_center()
-                .gap(px(7.))
-                .px(px(12.))
-                .child(swatch(cat))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-                .child(div().flex_1())
-                .when_some(note, |d, n| {
-                    d.child(div().text_color(c(hex::INK_FAINT)).child(n))
-                }),
-        )
-        .child(div().px(px(12.)).pb(px(10.)).children(rows))
 }

@@ -6,14 +6,17 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use gpui_kit::component::input::InputState;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, FocusHandle, PathPromptOptions, PromptLevel, Render, SharedString, Window, div, px,
     relative,
 };
+use gpui_kit::{Entity, Subscription};
 use videode_core::kdl_io::{from_kdl, to_kdl};
 use videode_core::{
-    ClipId, Document, EditResult, Frame, Project, TrackId, demo::demo_project, time,
+    ClipId, Document, EditResult, Frame, NodeId, OutputField, Project, TrackId, demo::demo_project,
+    time,
 };
 
 use crate::actions::*;
@@ -32,6 +35,63 @@ pub enum Tool {
 pub enum BinTab {
     Media,
     Nodes,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum View {
+    Timeline,
+    /// Shift+Tab: the whole sequence as one node graph.
+    Graph,
+}
+
+/// A value being typed into.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum FieldTarget {
+    Param {
+        clip: ClipId,
+        node: NodeId,
+        key: &'static str,
+    },
+    Output(OutputField),
+}
+
+pub(crate) struct FieldEdit {
+    pub target: FieldTarget,
+    pub input: Entity<InputState>,
+    pub _subscription: Subscription,
+}
+
+/// Pointer drags outside the timeline. Each follows the pointer anywhere in
+/// the window until release.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum PointerDrag {
+    /// Dragging a param label left/right to change its value.
+    Scrub {
+        clip: ClipId,
+        node: NodeId,
+        key: &'static str,
+        x0: f32,
+        v0: f64,
+    },
+    /// Dragging a node card in the peek panel to reorder it.
+    Node {
+        clip: ClipId,
+        node: NodeId,
+        x0: f32,
+        dx: f32,
+        moved: bool,
+    },
+    /// Panning the graph canvas.
+    Pan { x0: f32, y0: f32, gx: f32, gy: f32 },
+}
+
+/// The graph canvas transform: screen = origin + layout × zoom.
+pub(crate) struct GraphView {
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
+    pub fit_pending: bool,
+    pub bounds: std::rc::Rc<std::cell::Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
 }
 
 pub(crate) struct Playback {
@@ -87,6 +147,20 @@ pub struct Workspace {
     /// When the launch splash started; `None` once it's gone.
     pub(crate) splash: Option<Instant>,
     pub(crate) fx: Fx,
+    pub(crate) view: View,
+    /// The peek panel is open on the selected clip; the number keys its
+    /// unfold animation.
+    pub(crate) peek: Option<u64>,
+    /// The node highlighted in peek, graph and inspector.
+    pub(crate) focus_node: Option<NodeId>,
+    /// The inspector shows the Output node instead of the selection.
+    pub(crate) inspect_output: bool,
+    pub(crate) field: Option<FieldEdit>,
+    pub(crate) pdrag: Option<PointerDrag>,
+    pub(crate) graph: GraphView,
+    pub(crate) palette: Option<crate::palette::Palette>,
+    /// Palette entries run most recently, newest first.
+    pub(crate) recent_commands: Vec<String>,
     title: String,
 }
 
@@ -118,6 +192,21 @@ impl Workspace {
             modal_opened: Instant::now(),
             splash: None,
             fx: Fx::default(),
+            view: View::Timeline,
+            peek: None,
+            focus_node: None,
+            inspect_output: false,
+            field: None,
+            pdrag: None,
+            graph: GraphView {
+                x: 0.,
+                y: 0.,
+                zoom: 1.,
+                fit_pending: true,
+                bounds: Default::default(),
+            },
+            palette: None,
+            recent_commands: Vec::new(),
             title: String::new(),
         }
     }
@@ -128,6 +217,49 @@ impl Workspace {
         self.modal_opened = Instant::now();
     }
 
+    /// For snapshots: put the window in a state by name: `peek`, `graph`,
+    /// `output`, `focus` (second node of the selection), `edit` (typing into
+    /// its first value) or `palette=<query>`.
+    pub fn preview(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
+        match mode {
+            "peek" => self.open_peek(),
+            "graph" => self.open_graph(),
+            "output" => self.inspect_output = true,
+            "focus" | "edit" => {
+                let Some(clip) = self.selection.and_then(|id| self.project().clip(id)) else {
+                    return;
+                };
+                let Some(node) = clip.nodes.get(1) else {
+                    return;
+                };
+                let (clip_id, node_id) = (clip.id, node.id);
+                let spec = node.kind.params().first();
+                let text = spec
+                    .and_then(|spec| {
+                        node.get(spec.key)
+                            .map(|v| crate::inspector::number_text(spec, v))
+                    })
+                    .unwrap_or_default();
+                self.focus_node = Some(node_id);
+                if mode == "edit"
+                    && let Some(spec) = spec
+                {
+                    let target = FieldTarget::Param {
+                        clip: clip_id,
+                        node: node_id,
+                        key: spec.key,
+                    };
+                    self.begin_field(target, text, window, cx);
+                }
+            }
+            m => {
+                if let Some(q) = m.strip_prefix("palette=") {
+                    self.open_palette(q, window, cx);
+                }
+            }
+        }
+    }
+
     /// For snapshots: show the launch splash as it looks `elapsed` in.
     pub fn preview_splash(&mut self, elapsed: std::time::Duration) {
         self.splash = Instant::now().checked_sub(elapsed);
@@ -136,7 +268,7 @@ impl Workspace {
     /// For tests and snapshots: set the playhead and selection directly.
     pub fn set_view(&mut self, playhead: Frame, selection: Option<ClipId>) {
         self.playhead = playhead;
-        self.selection = selection;
+        self.select(selection);
     }
 
     pub fn document(&self) -> &Document {
@@ -178,6 +310,24 @@ impl Workspace {
         if settings::get(cx).splash && settings::motion(cx) {
             self.splash = Some(Instant::now());
             cx.notify();
+        }
+    }
+
+    pub(crate) fn next_seq(&mut self) -> u64 {
+        self.fx.next()
+    }
+
+    /// Selects a clip (or nothing), resetting what hangs off the old one.
+    pub(crate) fn select(&mut self, clip: Option<ClipId>) {
+        if self.selection != clip {
+            self.focus_node = None;
+            if clip.is_none() {
+                self.peek = None;
+            }
+        }
+        self.selection = clip;
+        if clip.is_some() {
+            self.inspect_output = false;
         }
     }
 
@@ -223,7 +373,7 @@ impl Workspace {
         if let Some(id) = self.selection
             && self.doc.project.clip(id).is_none()
         {
-            self.selection = None;
+            self.select(None);
         }
     }
 
@@ -237,7 +387,10 @@ impl Workspace {
 
     fn replace_document(&mut self, doc: Document) {
         self.doc = doc;
-        self.selection = None;
+        self.select(None);
+        self.view = View::Timeline;
+        self.inspect_output = false;
+        self.field = None;
         self.playback = None;
         self.playhead = 0;
         self.tl.scroll_x = 0.;
@@ -378,14 +531,152 @@ impl Workspace {
         self.guard_unsaved(window, cx, |_, _, cx| cx.quit());
     }
 
-    fn export(&mut self, _: &Export, _: &mut Window, cx: &mut Context<Self>) {
-        let o = &self.doc.project.output;
-        let msg = format!(
-            "Export isn't built yet · the Output node is set to {} · {} · {}",
-            o.container, o.codec, o.resolution
-        );
-        self.say(msg);
+    fn export(&mut self, _: &Export, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_output(&OpenOutput, window, cx);
+    }
+
+    /* ---------- node views ---------- */
+
+    fn open_output(&mut self, _: &OpenOutput, _: &mut Window, cx: &mut Context<Self>) {
+        self.inspect_output = true;
+        self.say("Export is a node: the Output node is open in the inspector");
         cx.notify();
+    }
+
+    fn toggle_peek(&mut self, _: &TogglePeek, _: &mut Window, cx: &mut Context<Self>) {
+        if self.peek.is_some() {
+            self.peek = None;
+        } else if let Some(clip) = self.selection {
+            if self.view == View::Graph {
+                self.view = View::Timeline;
+            }
+            self.reveal_clip(clip);
+            self.open_peek();
+            self.say("Peeking at the clip's nodes · click one to inspect it, drag to reorder");
+        } else {
+            self.say("Select a clip, then press Tab to peek at its nodes");
+        }
+        cx.notify();
+    }
+
+    fn toggle_graph(&mut self, _: &ToggleGraph, _: &mut Window, cx: &mut Context<Self>) {
+        if self.view == View::Graph {
+            self.close_graph();
+        } else {
+            self.open_graph();
+        }
+        cx.notify();
+    }
+
+    fn command_palette(&mut self, _: &CommandPalette, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette.is_some() {
+            self.close_palette(window, cx);
+        } else {
+            self.open_palette("", window, cx);
+        }
+    }
+
+    fn add_node_menu(&mut self, _: &AddNodeMenu, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selection.is_none() {
+            self.say("Select a clip first, then add a node");
+            cx.notify();
+            return;
+        }
+        self.open_palette("Add ", window, cx);
+    }
+
+    /// The focused node, if it belongs to the selected clip.
+    pub(crate) fn focused_node(&self) -> Option<(ClipId, NodeId)> {
+        let clip = self.selection?;
+        let node = self.focus_node?;
+        self.project().clip(clip)?.node(node)?;
+        Some((clip, node))
+    }
+
+    fn bypass_node(&mut self, _: &BypassNode, _: &mut Window, cx: &mut Context<Self>) {
+        match self.focused_node() {
+            Some((clip, node)) => self.toggle_bypass(clip, node, cx),
+            None => {
+                self.say("Click a node in the inspector or peek first");
+                cx.notify();
+            }
+        }
+    }
+
+    /// Scrolls the timeline so `clip` is on screen.
+    pub(crate) fn reveal_clip(&mut self, clip: ClipId) {
+        let Some(c) = self.project().clip(clip) else {
+            return;
+        };
+        let (x0, x1) = (self.frame_x(c.start), self.frame_x(c.end()));
+        let w = self.lanes_width();
+        if w > 0. && (x1 < 0. || x0 > w) {
+            self.tl.scroll_x = (c.start as f32 * self.tl.ppf - 80.).max(0.);
+        }
+    }
+
+    /* ---------- window-wide pointer drags ---------- */
+
+    pub(crate) fn pointer_move(
+        &mut self,
+        pos: gpui_kit::Point<gpui_kit::Pixels>,
+        m: gpui_kit::Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let (x, y) = (f32::from(pos.x), f32::from(pos.y));
+        match &mut self.pdrag {
+            Some(PointerDrag::Scrub { .. }) => self.scrub_to(x, m.shift, m.alt, cx),
+            Some(PointerDrag::Node { x0, dx, moved, .. }) => {
+                *dx = x - *x0;
+                *moved |= dx.abs() > 4.;
+                cx.notify();
+            }
+            Some(PointerDrag::Pan { x0, y0, gx, gy }) => {
+                self.graph.x = *gx + x - *x0;
+                self.graph.y = *gy + y - *y0;
+                cx.notify();
+            }
+            None => {}
+        }
+    }
+
+    pub(crate) fn pointer_up(&mut self, cx: &mut Context<Self>) {
+        if let Some(PointerDrag::Node {
+            clip,
+            node,
+            dx,
+            moved: true,
+            ..
+        }) = self.pdrag.take()
+        {
+            self.drop_node(clip, node, dx, cx);
+        }
+        cx.notify();
+    }
+
+    fn pointer_listeners(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let this = cx.entity().downgrade();
+        gpui_kit::canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                let on_move = this.clone();
+                window.on_mouse_event(move |e: &gpui_kit::MouseMoveEvent, phase, _, cx| {
+                    if phase == gpui_kit::DispatchPhase::Bubble {
+                        on_move
+                            .update(cx, |ws, cx| ws.pointer_move(e.position, e.modifiers, cx))
+                            .ok();
+                    }
+                });
+                let on_up = this.clone();
+                window.on_mouse_event(move |_: &gpui_kit::MouseUpEvent, phase, _, cx| {
+                    if phase == gpui_kit::DispatchPhase::Bubble {
+                        on_up.update(cx, |ws, cx| ws.pointer_up(cx)).ok();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_0()
     }
 
     /* ---------- edit actions ---------- */
@@ -451,6 +742,19 @@ impl Workspace {
     }
 
     fn delete(&mut self, ripple: bool, cx: &mut Context<Self>) {
+        // With the peek open, Delete removes the focused node instead.
+        if !ripple
+            && self.peek.is_some()
+            && let Some((clip, node)) = self.focused_node()
+            && !self
+                .project()
+                .clip(clip)
+                .and_then(|c| c.node(node))
+                .is_some_and(|n| n.kind.is_generator())
+        {
+            self.remove_node(clip, node, cx);
+            return;
+        }
         let Some(id) = self.selection else {
             self.say("Select a clip to delete");
             cx.notify();
@@ -467,7 +771,7 @@ impl Workspace {
             }
         });
         if done.is_some() {
-            self.selection = None;
+            self.select(None);
             let verb = if ripple { "Ripple deleted" } else { "Deleted" };
             self.say(format!("{verb} {name} · {} to undo", cmd_key("Z")));
         }
@@ -484,12 +788,19 @@ impl Workspace {
     fn deselect(&mut self, _: &Deselect, _: &mut Window, cx: &mut Context<Self>) {
         if self.modal.is_some() {
             self.modal = None;
+        } else if self.pdrag.take().is_some() {
+        } else if self.peek.is_some() {
+            self.peek = None;
+        } else if self.view == View::Graph {
+            self.close_graph();
+        } else if self.inspect_output {
+            self.inspect_output = false;
         } else if self.tl.drag.is_some() {
             self.cancel_drag();
         } else if self.tool == Tool::Blade {
             self.tool = Tool::Select;
         } else {
-            self.selection = None;
+            self.select(None);
         }
         cx.notify();
     }
@@ -775,9 +1086,15 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::deselect))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::about))
+            .on_action(cx.listener(Self::command_palette))
+            .on_action(cx.listener(Self::open_output))
             // Editing and transport are detached while a dialog is open.
             .when(editing, |d| {
-                d.on_action(cx.listener(Self::undo))
+                d.on_action(cx.listener(Self::toggle_peek))
+                    .on_action(cx.listener(Self::toggle_graph))
+                    .on_action(cx.listener(Self::add_node_menu))
+                    .on_action(cx.listener(Self::bypass_node))
+                    .on_action(cx.listener(Self::undo))
                     .on_action(cx.listener(Self::redo))
                     .on_action(cx.listener(Self::split))
                     .on_action(cx.listener(Self::delete_clip))
@@ -811,25 +1128,45 @@ impl Render for Workspace {
                 }))
             })
             .child(self.render_top_bar(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .child(self.render_bin(cx))
-                    .child(self.render_viewer(cx))
-                    .child(self.render_inspector()),
-            )
-            .child(
-                div()
-                    .h(px(5.))
-                    .flex_none()
-                    .bg(c(hex::PLUGE_SUB))
-                    .border_t_1()
-                    .border_color(c(hex::LINE)),
-            )
-            .child(self.render_timeline(window, cx))
+            .map(|d| match self.view {
+                View::Graph => d.child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .child(self.render_graph(window, cx))
+                        .child(self.render_inspector(cx)),
+                ),
+                View::Timeline => d
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .child(self.render_bin(cx))
+                            .child(self.render_viewer(cx))
+                            .child(self.render_inspector(cx)),
+                    )
+                    .child(
+                        div()
+                            .h(px(5.))
+                            .flex_none()
+                            .bg(c(hex::PLUGE_SUB))
+                            .border_t_1()
+                            .border_color(c(hex::LINE)),
+                    )
+                    .child(self.render_timeline(window, cx)),
+            })
             .child(self.render_status_bar())
+            .children(
+                (self.view == View::Timeline)
+                    .then(|| self.render_peek(window, cx))
+                    .flatten(),
+            )
+            .when(self.pdrag.is_some(), |d| {
+                d.child(self.pointer_listeners(cx))
+            })
+            .children(self.render_palette(window, cx))
             .children(self.modal.map(|m| self.render_modal(m, cx)))
             .children(self.render_splash(window, cx))
     }
