@@ -22,12 +22,10 @@ impl Workspace {
         self.peek = None;
         self.view = View::Graph;
         self.graph.fit_pending = true;
-        self.say("Graph view · everything in the sequence is a node · Esc returns to the timeline");
     }
 
     pub(crate) fn close_graph(&mut self) {
         self.view = View::Timeline;
-        self.say("Timeline");
     }
 
     fn fit_graph(&mut self) {
@@ -84,13 +82,9 @@ impl Workspace {
                     .track(t)
                     .map(|t| t.label.clone())
                     .unwrap_or_default();
-                self.say(format!(
-                    "Track {label} · mute, hide and lock it from the timeline header"
-                ));
+                self.say(format!("Track {label}"));
             }
-            GraphRef::Composite => {
-                self.say("Composite stacks the video tracks, top track over bottom")
-            }
+            GraphRef::Composite => self.say("Composite · video tracks, top over bottom"),
             GraphRef::Mix => self.say("Mix sums the audio tracks"),
         }
         cx.notify();
@@ -102,7 +96,6 @@ impl Workspace {
         self.select(Some(clip));
         self.reveal_clip(clip);
         self.open_peek();
-        self.say("Back in the timeline · peeking at the clip you opened");
         cx.notify();
     }
 
@@ -216,10 +209,7 @@ impl Workspace {
                             cx.notify();
                         }
                     }))
-                    .tooltip(tip(
-                        "Click to select · double-click to open in the timeline",
-                        None,
-                    ))
+                    .tooltip(tip("Double-click to open", None))
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
@@ -304,9 +294,11 @@ impl Workspace {
                         cx.notify();
                     })),
             )
-            .child(div().text_color(c(hex::INK_FAINT)).child(
-                "Drag to pan · scroll to zoom · double-click a clip to open it in the timeline",
-            ));
+            .child(
+                div()
+                    .text_color(c(hex::INK_FAINT))
+                    .child("Drag to pan · scroll to zoom"),
+            );
         let legend = div()
             .absolute()
             .bottom(px(12.))

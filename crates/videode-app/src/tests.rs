@@ -276,7 +276,7 @@ fn delete_in_peek_removes_the_focused_node_not_the_clip(cx: &mut TestAppContext)
     });
     cx.simulate_keystrokes("shift-b");
     assert!(
-        ws.read_with(cx, |ws, _| ws.status.text.contains("Click a node")),
+        ws.read_with(cx, |ws, _| ws.status.text.contains("Select a node")),
         "nothing focused to bypass"
     );
 }

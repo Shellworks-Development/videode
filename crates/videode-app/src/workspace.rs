@@ -24,7 +24,6 @@ use crate::media::{FrameKey, ViewerFrame};
 use crate::settings;
 use crate::theme::{self, c, hex};
 use crate::timeline::TimelineState;
-use crate::ui::cmd_key;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tool {
@@ -197,7 +196,7 @@ impl Workspace {
             bin_tab: BinTab::Media,
             tl: TimelineState::default(),
             status: Status {
-                text: "New project · open the demo to try editing, or open a .vde project".into(),
+                text: "New project".into(),
                 error: false,
                 seq: 0,
             },
@@ -507,7 +506,7 @@ impl Workspace {
                 match self.refresh_media() {
                     0 => self.say(format!("Opened {}", path.display())),
                     n => self.say_error(format!(
-                        "Opened {} · {n} media file{} can't be found",
+                        "Opened {} · {n} file{} offline",
                         path.display(),
                         if n == 1 { "" } else { "s" }
                     )),
@@ -579,7 +578,6 @@ impl Workspace {
 
     fn open_output(&mut self, _: &OpenOutput, _: &mut Window, cx: &mut Context<Self>) {
         self.inspect_output = true;
-        self.say("Export is a node: the Output node is open in the inspector");
         cx.notify();
     }
 
@@ -592,9 +590,8 @@ impl Workspace {
             }
             self.reveal_clip(clip);
             self.open_peek();
-            self.say("Peeking at the clip's nodes · click one to inspect it, drag to reorder");
         } else {
-            self.say("Select a clip, then press Tab to peek at its nodes");
+            self.say("Select a clip first");
         }
         cx.notify();
     }
@@ -637,7 +634,7 @@ impl Workspace {
         match self.focused_node() {
             Some((clip, node)) => self.toggle_bypass(clip, node, cx),
             None => {
-                self.say("Click a node in the inspector or peek first");
+                self.say("Select a node first");
                 cx.notify();
             }
         }
@@ -758,7 +755,7 @@ impl Workspace {
                 .collect(),
         };
         if targets.is_empty() {
-            self.say("No clip under the playhead to split");
+            self.say("No clip at the playhead");
             cx.notify();
             return;
         }
@@ -775,11 +772,7 @@ impl Workspace {
             } else {
                 format!("{n} clips")
             };
-            self.say(format!(
-                "Split {what} at {} · {} to undo",
-                self.tc(t),
-                cmd_key("Z")
-            ));
+            self.say(format!("Split {what} at {}", self.tc(t)));
         }
     }
 
@@ -815,7 +808,7 @@ impl Workspace {
         if done.is_some() {
             self.select(None);
             let verb = if ripple { "Ripple deleted" } else { "Deleted" };
-            self.say(format!("{verb} {name} · {} to undo", cmd_key("Z")));
+            self.say(format!("{verb} {name}"));
         }
     }
 
@@ -860,7 +853,7 @@ impl Workspace {
         self.tool = tool;
         self.say(match tool {
             Tool::Select => "Select tool",
-            Tool::Blade => "Blade · click a clip to cut it · V or Esc to go back",
+            Tool::Blade => "Blade",
         });
         cx.notify();
     }
@@ -868,7 +861,7 @@ impl Workspace {
     pub(crate) fn toggle_snap(&mut self, _: &ToggleSnap, _: &mut Window, cx: &mut Context<Self>) {
         self.snap = !self.snap;
         self.say(if self.snap {
-            "Snapping on · 1 s grid, clip edges, playhead"
+            "Snapping on"
         } else {
             "Snapping off"
         });
@@ -883,7 +876,7 @@ impl Workspace {
         match track {
             Some(track) => self.toggle_track_enabled(track, cx),
             None => {
-                self.say("Select a clip to mute or hide its track");
+                self.say("Select a clip first");
                 cx.notify();
             }
         }

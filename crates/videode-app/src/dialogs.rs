@@ -59,34 +59,21 @@ fn segmented<T: Copy + PartialEq + 'static>(
         }))
 }
 
-fn setting_row(
-    title: &'static str,
-    detail: impl Into<SharedString>,
-    control: impl IntoElement,
-) -> impl IntoElement {
+fn setting_row(title: &'static str, control: impl IntoElement) -> impl IntoElement {
     div()
+        .h(px(34.))
         .flex()
-        .items_start()
-        .gap(px(16.))
-        .py(px(10.))
-        .border_b_1()
-        .border_color(c(hex::LINE))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(div().font_weight(FontWeight::MEDIUM).child(title))
-                .child(div().text_color(c(hex::INK_FAINT)).child(detail.into())),
-        )
-        .child(div().flex_none().pt(px(2.)).child(control))
+        .items_center()
+        .gap(px(12.))
+        .child(div().flex_1().min_w_0().child(title))
+        .child(div().flex_none().child(control))
 }
 
 fn section_title(text: &'static str) -> impl IntoElement {
     div()
-        .pt(px(14.))
+        .pt(px(10.))
         .pb(px(2.))
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(c(hex::INK_DIM))
+        .text_color(c(hex::INK_FAINT))
         .child(text)
 }
 
@@ -98,8 +85,8 @@ impl Workspace {
 
     pub(crate) fn render_modal(&self, modal: Modal, cx: &mut Context<Self>) -> AnyElement {
         let (panel, width) = match modal {
-            Modal::Settings => (self.settings_panel(cx), 520.),
-            Modal::About => (self.about_panel(cx), 380.),
+            Modal::Settings => (self.settings_panel(cx), 420.),
+            Modal::About => (self.about_panel(cx), 340.),
         };
         let panel = div()
             .id("modal-panel")
@@ -151,12 +138,12 @@ impl Workspace {
 
     fn dialog_header(&self, title: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .h(px(44.))
+            .h(px(40.))
             .flex_none()
             .flex()
             .items_center()
             .gap(px(8.))
-            .pl(px(16.))
+            .pl(px(14.))
             .pr(px(8.))
             .border_b_1()
             .border_color(c(hex::LINE))
@@ -178,19 +165,7 @@ impl Workspace {
     fn settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let app = cx.global::<settings::AppSettings>();
         let s = app.settings.clone();
-        let system = app.system_reduces_motion;
-        let path = app.path.as_ref().map(|p| p.display().to_string());
         let notes = app.notes.clone();
-
-        let motion_note = match (s.animations, system) {
-            (Animations::System, Some(true)) => {
-                "Your system asks for reduced motion, so animations are off."
-            }
-            (Animations::System, Some(false)) => "Your system allows motion, so animations are on.",
-            (Animations::System, None) => "Couldn't read the system setting, so animations are on.",
-            (Animations::On, _) => "Animations always play.",
-            (Animations::Off, _) => "Every change is instant.",
-        };
         let refresh = cx.entity().downgrade();
         let changed = move |cx: &mut gpui_kit::App| {
             refresh.update(cx, |_, cx| cx.notify()).ok();
@@ -251,58 +226,18 @@ impl Workspace {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .px(px(16.))
-                    .pb(px(6.))
+                    .px(px(14.))
+                    .pb(px(8.))
                     .child(section_title("Appearance"))
-                    .child(setting_row("Animations", motion_note, animations))
-                    .child(setting_row(
-                        "Splash on launch",
-                        "Plays the mark once while the window opens. Any key skips it.",
-                        splash,
-                    ))
-                    .child(section_title("Editing"))
-                    .child(setting_row(
-                        "Snap in new windows",
-                        "Toggle any time with N.",
-                        snap,
-                    ))
-                    .child(setting_row(
-                        "Zoom step",
-                        "How far = and − zoom per press.",
-                        zoom,
-                    )),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .px(px(16.))
-                    .py(px(10.))
-                    .border_t_1()
-                    .border_color(c(hex::LINE))
-                    .text_color(c(hex::INK_FAINT))
-                    .child(match path {
-                        Some(p) => div()
-                            .flex()
-                            .gap(px(6.))
-                            .child("Saved as you change them to")
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .font_family(theme::MONO)
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(p),
-                            ),
-                        None => div().child("Settings can't be saved: no config folder was found."),
-                    })
+                    .child(setting_row("Animations", animations))
+                    .child(setting_row("Splash on launch", splash))
+                    .child(section_title("Timeline"))
+                    .child(setting_row("Snap by default", snap))
+                    .child(setting_row("Zoom step", zoom))
                     .children(
                         notes
                             .into_iter()
-                            .map(|n| div().text_color(c(hex::WARN)).child(n)),
+                            .map(|n| div().pt(px(8.)).text_color(c(hex::WARN)).child(n)),
                     ),
             )
             .into_any_element()
@@ -318,14 +253,14 @@ impl Workspace {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(18.))
-                    .p(px(20.))
-                    .child(brand::mark(72., progress))
+                    .gap(px(16.))
+                    .px(px(18.))
+                    .py(px(16.))
+                    .child(brand::mark(56., progress))
                     .child(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(2.))
                             .child(
                                 div()
                                     .text_size(px(WORDMARK))
@@ -336,10 +271,11 @@ impl Workspace {
                             .child(
                                 div()
                                     .text_color(c(hex::INK_DIM))
-                                    .child("A video editor where everything is a node."),
+                                    .child("by Shellworks Development"),
                             )
                             .child(
                                 div()
+                                    .pt(px(2.))
                                     .font_family(theme::MONO)
                                     .text_color(c(hex::INK_FAINT))
                                     .child(format!(
@@ -356,16 +292,12 @@ impl Workspace {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .px(px(20.))
-                    .py(px(12.))
+                    .px(px(18.))
+                    .py(px(10.))
                     .border_t_1()
                     .border_color(c(hex::LINE))
                     .text_color(c(hex::INK_FAINT))
-                    .child(
-                        div()
-                            .flex_1()
-                            .child("Built with GPUI · Geist (OFL) · Lucide (ISC)"),
-                    )
+                    .child(div().flex_1().child("Special thanks to FFmpeg"))
                     .child(
                         button("about-done", None, "Done", false)
                             .on_click(cx.listener(|this, _, _, cx| this.close_modal(cx))),

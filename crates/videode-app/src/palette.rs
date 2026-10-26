@@ -310,7 +310,7 @@ impl Workspace {
                     .clip(clip)
                     .map(|c| self.project().clip_name(c))
                     .unwrap_or_default();
-                self.say(format!("Selected {name} · Tab to peek at its nodes"));
+                self.say(format!("Selected {name}"));
             }
             Run::Media(media) => self.add_media_at_playhead(media, cx),
         }
