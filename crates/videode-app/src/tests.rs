@@ -188,11 +188,9 @@ fn typed_values_commit_on_enter_and_cancel_on_escape(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn scrubbing_is_one_undo_step(cx: &mut TestAppContext) {
-    let (ws, cx) = open(cx);
-    let clip = select_graded(&ws, cx);
-    let before = exposure(&ws, cx, clip);
+/// Drags the selected clip's exposure label from x = 100 to `to`.
+fn scrub_exposure(ws: &Entity<Workspace>, cx: &mut VisualTestContext, clip: ClipId, to: f32) {
+    let v0 = exposure(ws, cx, clip);
     ws.update(cx, |ws, cx| {
         let node = ws
             .doc
@@ -207,9 +205,9 @@ fn scrubbing_is_one_undo_step(cx: &mut TestAppContext) {
             node,
             key: "exposure",
             x0: 100.,
-            v0: before,
+            v0,
         });
-        for x in [110., 130., 160.] {
+        for x in [110., (110. + to) / 2., to] {
             ws.pointer_move(
                 gpui::point(gpui::px(x), gpui::px(0.)),
                 Default::default(),
@@ -218,10 +216,34 @@ fn scrubbing_is_one_undo_step(cx: &mut TestAppContext) {
         }
         ws.pointer_up(cx);
     });
+}
+
+#[gpui::test]
+fn scrubbing_is_one_undo_step(cx: &mut TestAppContext) {
+    let (ws, cx) = open(cx);
+    let clip = select_graded(&ws, cx);
+    let before = exposure(&ws, cx, clip);
+    scrub_exposure(&ws, cx, clip, 160.);
     let after = exposure(&ws, cx, clip);
     assert!(after > before, "dragging right raises the value");
     cx.simulate_keystrokes(&format!("{MOD}-z"));
     assert_eq!(exposure(&ws, cx, clip), before, "one undo restores it");
+}
+
+#[gpui::test]
+fn each_scrub_is_its_own_undo_step(cx: &mut TestAppContext) {
+    let (ws, cx) = open(cx);
+    let clip = select_graded(&ws, cx);
+    scrub_exposure(&ws, cx, clip, 160.);
+    let first = exposure(&ws, cx, clip);
+    scrub_exposure(&ws, cx, clip, 160.);
+    assert!(exposure(&ws, cx, clip) > first);
+    cx.simulate_keystrokes(&format!("{MOD}-z"));
+    assert_eq!(
+        exposure(&ws, cx, clip),
+        first,
+        "undo only takes back the second drag, though both started at the same x"
+    );
 }
 
 #[gpui::test]
