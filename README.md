@@ -11,15 +11,14 @@ Inside, everything is a node: media, clips, effects, tracks, the sequence and th
 
 ## Status
 
-Milestone M4: playback and sound.
+Milestone M5: export.
 
-- **Sound:** audio clips play through the default output device, mixed with their Gain and Fade nodes; muted tracks are silent. At normal speed the sound's clock drives the playhead, so picture follows audio. J/K/L shuttle runs silent.
-- **Meters:** peak meters beside the viewer, green to −12 dB, yellow to −3 dB, then red.
-- **Timeline:** waveforms on audio clips and filmstrips on video clips.
-- **Viewer:** Grade, Blur and rotation are drawn (on the CPU for now), along with Transform, Crop, Opacity and Fade.
-- **Media:** import by menu, Ctrl/Cmd I or drag and drop; thumbnails; offline files can be relinked, and other missing files in the same folder come along.
+- **Export area** (**Ctrl/Cmd 4**, back with **Ctrl/Cmd 1**): presets, the Output node's settings, a summary and a render queue. Jobs run one at a time and can be cancelled; a cancelled or failed export never leaves a broken file.
+- **Formats:** MP4, MOV, MKV and WebM with H.264, H.265, AV1, VP9 or ProRes 422 / 422 HQ; PNG sequences; WAV. Sound is AAC, Opus or 24-bit PCM.
+- **Encoders:** hardware when available (VideoToolbox, NVENC, Quick Sync, AMF, Media Foundation), otherwise x264, x265, SVT-AV1, libvpx or FFmpeg's ProRes. The summary shows which one will run.
+- **Picture:** every enabled video track is composited, with Transform, Crop, Opacity, Fade, Grade, Blur, rotation and Text. Output is tagged Rec.709.
 
-From M2: every clip is a chain of nodes. Edit any value in the inspector, peek at a clip's nodes with **Tab**, see the whole sequence as a graph with **Shift+Tab**, and search everything with the command palette (**Ctrl/Cmd K**). From M1: timeline editing, undo/redo and `.vde` project files. Export arrives in M5.
+From M4: sound playback with the audio clock driving the playhead, meters, waveforms and filmstrips, relinking. From M2: every clip is a chain of nodes. Edit any value in the inspector, peek at a clip's nodes with **Tab**, see the whole sequence as a graph with **Shift+Tab**, and search everything with the command palette (**Ctrl/Cmd K**). From M1: timeline editing, undo/redo and `.vde` project files.
 
 ![M3 viewer and bin](docs/m3-media.png)
 
@@ -64,6 +63,7 @@ crates/
   videode-media/  FFmpeg probing, frame-accurate video and sample-accurate audio decoding
   videode-audio/  mixer and output engine (cpal); its sample clock drives playback
   videode-render/ pixel effects: Grade, Blur, rotation
+  videode-export/ compositor and FFmpeg encoding for export
   videode-app/    the GPUI application: window, theme, editor shell
 assets/fonts/     Geist and Geist Mono (SIL OFL 1.1)
 mockup/           approved HTML mockup with synthetic demo media

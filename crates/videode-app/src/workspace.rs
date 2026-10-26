@@ -37,6 +37,13 @@ pub enum BinTab {
     Nodes,
 }
 
+/// The window's areas, switched from the title bar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Area {
+    Edit,
+    Export,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Timeline,
@@ -149,6 +156,7 @@ pub struct Workspace {
     /// When the launch splash started; `None` once it's gone.
     pub(crate) splash: Option<Instant>,
     pub(crate) fx: Fx,
+    pub(crate) area: Area,
     pub(crate) view: View,
     /// The peek panel is open on the selected clip; the number keys its
     /// unfold animation.
@@ -186,6 +194,8 @@ pub struct Workspace {
     pub(crate) frame_failed: Option<FrameKey>,
     /// The viewer's screen in window coordinates, captured each frame.
     pub(crate) viewer_bounds: std::rc::Rc<std::cell::Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
+    /// Export jobs, queued, running and finished.
+    pub(crate) exports: crate::export::Exports,
     title: String,
 }
 
@@ -217,6 +227,7 @@ impl Workspace {
             modal_opened: Instant::now(),
             splash: None,
             fx: Fx::default(),
+            area: Area::Edit,
             view: View::Timeline,
             peek: None,
             focus_node: None,
@@ -243,6 +254,7 @@ impl Workspace {
             meters: [0.; 2],
             frame_failed: None,
             viewer_bounds: Default::default(),
+            exports: Default::default(),
             title: String::new(),
         };
         ws.refresh_media();
@@ -264,6 +276,7 @@ impl Workspace {
             "peek" => self.open_peek(),
             "graph" => self.open_graph(),
             "output" => self.inspect_output = true,
+            "export" => self.area = Area::Export,
             "media" => {
                 self.media_root = crate::media::demo_root();
                 self.refresh_media();
@@ -615,8 +628,14 @@ impl Workspace {
         self.guard_unsaved(window, cx, |_, _, cx| cx.quit());
     }
 
-    fn export(&mut self, _: &Export, window: &mut Window, cx: &mut Context<Self>) {
-        self.open_output(&OpenOutput, window, cx);
+    fn export(&mut self, _: &Export, _: &mut Window, cx: &mut Context<Self>) {
+        self.area = Area::Export;
+        cx.notify();
+    }
+
+    fn show_edit(&mut self, _: &ShowEdit, _: &mut Window, cx: &mut Context<Self>) {
+        self.area = Area::Edit;
+        cx.notify();
     }
 
     /* ---------- node views ---------- */
@@ -1155,6 +1174,9 @@ impl Render for Workspace {
         self.tick_playback(window, cx);
         self.sync_viewer_frame(window, cx);
         self.update_title(window);
+        if self.area == Area::Export {
+            self.ensure_encoders(cx);
+        }
         let editing = self.modal.is_none();
 
         div()
@@ -1176,6 +1198,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::quit))
             .on_action(cx.listener(Self::export))
+            .on_action(cx.listener(Self::show_edit))
             .on_action(cx.listener(Self::deselect))
             .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(Self::about))
@@ -1226,8 +1249,9 @@ impl Render for Workspace {
                 }))
             })
             .child(self.render_top_bar(cx))
-            .map(|d| match self.view {
-                View::Graph => d.child(
+            .map(|d| match (self.area, self.view) {
+                (Area::Export, _) => d.child(self.render_export_area(cx)),
+                (Area::Edit, View::Graph) => d.child(
                     div()
                         .flex_1()
                         .min_h_0()
@@ -1235,7 +1259,7 @@ impl Render for Workspace {
                         .child(self.render_graph(window, cx))
                         .child(self.render_inspector(cx)),
                 ),
-                View::Timeline => d
+                (Area::Edit, View::Timeline) => d
                     .child(
                         div()
                             .flex_1()
@@ -1257,7 +1281,7 @@ impl Render for Workspace {
             })
             .child(self.render_status_bar())
             .children(
-                (self.view == View::Timeline)
+                (self.area == Area::Edit && self.view == View::Timeline)
                     .then(|| self.render_peek(window, cx))
                     .flatten(),
             )

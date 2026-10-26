@@ -13,6 +13,7 @@ videode-core = { path = "crates/videode-core" }
 videode-media = { path = "crates/videode-media" }
 videode-audio = { path = "crates/videode-audio" }
 videode-render = { path = "crates/videode-render" }
+videode-export = { path = "crates/videode-export" }
 # gpui-kit pins a matching GPUI snapshot and re-exports gpui, gpui-base and gpui-component.
 gpui-kit = "=0.8.0"
 anyhow = "1"
@@ -25,3 +26,13 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = "line-tables-only"
+
+# Per-pixel work (effects, compositing, export) is far too slow unoptimized.
+[profile.dev.package.videode-render]
+opt-level = 3
+
+[profile.dev.package.videode-export]
+opt-level = 3
+
+[profile.dev.package.videode-media]
+opt-level = 3

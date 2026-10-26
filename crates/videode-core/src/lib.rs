@@ -20,6 +20,7 @@ pub use node::{
 };
 pub use project::{
     Clip, ClipId, Media, MediaId, MediaKind, OutputField, OutputSettings, Project, Track, TrackId,
+    container_codecs, container_extension,
 };
 pub use settings::{Animations, Settings};
 pub use time::{Fps, Frame};

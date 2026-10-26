@@ -14,7 +14,7 @@
 //!         }
 //!     }
 //! }
-//! output container=MP4 codec=H.264 resolution=1920×1080 quality=High path="export.mp4"
+//! output container=MP4 codec=H.264 resolution=Sequence quality=High hardware=Auto path="export.mp4"
 //! ```
 //!
 //! Ids inside the program are regenerated on load; files refer to media by
@@ -151,6 +151,7 @@ pub fn to_kdl(p: &Project) -> String {
     out.push(prop("codec", o.codec.as_str()));
     out.push(prop("resolution", o.resolution.as_str()));
     out.push(prop("quality", o.quality.as_str()));
+    out.push(prop("hardware", o.hardware.as_str()));
     out.push(prop("path", o.path.as_str()));
     doc.nodes_mut().push(out);
 
@@ -367,6 +368,7 @@ pub fn from_kdl(text: &str) -> Result<Project, LoadError> {
             codec: s("codec", &d.codec)?,
             resolution: s("resolution", &d.resolution)?,
             quality: s("quality", &d.quality)?,
+            hardware: s("hardware", &d.hardware)?,
             path: s("path", &d.path)?,
         };
     }

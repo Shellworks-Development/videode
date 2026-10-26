@@ -761,64 +761,65 @@ impl Workspace {
             .into_any_element()
     }
 
+    /// The control for one Output setting: a menu of its choices, or a
+    /// text box for the file.
+    pub(crate) fn output_control(&self, field: OutputField, cx: &mut Context<Self>) -> AnyElement {
+        let o = &self.project().output;
+        let value = o.get(field).to_string();
+        let choices = o.choices(field);
+        if choices.is_empty() {
+            return self.text_field(
+                FieldTarget::Output(field),
+                FieldLook {
+                    shown: value.clone(),
+                    edit: value,
+                    unit: "",
+                    changed: true,
+                    number: false,
+                },
+                cx,
+            );
+        }
+        let ws = cx.entity().downgrade();
+        let current = value.clone();
+        div()
+            .flex_1()
+            .min_w_0()
+            .child(
+                choice_button(
+                    SharedString::from(format!("out-{field:?}")),
+                    value,
+                    true,
+                    cx,
+                )
+                .dropdown_menu(move |mut menu, _, _| {
+                    for &opt in choices {
+                        let ws = ws.clone();
+                        menu = menu.item(PopupMenuItem::new(opt).checked(opt == current).on_click(
+                            move |_, _, cx| {
+                                ws.update(cx, |ws, cx| {
+                                    let label =
+                                        format!("set output {}", field.label().to_lowercase());
+                                    ws.apply(&label, cx, |p| p.set_output(field, opt));
+                                })
+                                .ok();
+                            },
+                        ));
+                    }
+                    menu
+                }),
+            )
+            .into_any_element()
+    }
+
     fn output_inspector(&self, cx: &mut Context<Self>) -> AnyElement {
-        let o = self.project().output.clone();
         let mut rows: Vec<AnyElement> = Vec::new();
         for field in OutputField::ALL {
-            let value = o.get(field).to_string();
             let label = div()
                 .w(px(LABEL_W))
                 .flex_none()
                 .text_color(c(hex::INK_DIM))
                 .child(field.label());
-            let control: AnyElement = if field.options().is_empty() {
-                self.text_field(
-                    FieldTarget::Output(field),
-                    FieldLook {
-                        shown: value.clone(),
-                        edit: value,
-                        unit: "",
-                        changed: true,
-                        number: false,
-                    },
-                    cx,
-                )
-            } else {
-                let ws = cx.entity().downgrade();
-                let current = value.clone();
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        choice_button(
-                            SharedString::from(format!("out-{field:?}")),
-                            value,
-                            true,
-                            cx,
-                        )
-                        .dropdown_menu(move |mut menu, _, _| {
-                            for &opt in field.options() {
-                                let ws = ws.clone();
-                                menu = menu.item(
-                                    PopupMenuItem::new(opt).checked(opt == current).on_click(
-                                        move |_, _, cx| {
-                                            ws.update(cx, |ws, cx| {
-                                                let label = format!(
-                                                    "set output {}",
-                                                    field.label().to_lowercase()
-                                                );
-                                                ws.apply(&label, cx, |p| p.set_output(field, opt));
-                                            })
-                                            .ok();
-                                        },
-                                    ),
-                                );
-                            }
-                            menu
-                        }),
-                    )
-                    .into_any_element()
-            };
             rows.push(
                 div()
                     .flex()
@@ -826,7 +827,7 @@ impl Workspace {
                     .gap(px(8.))
                     .min_h(px(28.))
                     .child(label)
-                    .child(control)
+                    .child(self.output_control(field, cx))
                     .into_any_element(),
             );
         }
@@ -865,7 +866,8 @@ impl Workspace {
                         button("render", Some("upload"), "Render", true)
                             .justify_center()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.say("Rendering isn't available yet");
+                                this.queue_export(cx);
+                                this.area = crate::workspace::Area::Export;
                                 cx.notify();
                             })),
                     ),
