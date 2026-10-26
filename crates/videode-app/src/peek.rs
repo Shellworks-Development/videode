@@ -199,7 +199,7 @@ impl Workspace {
                 .apply("reorder node", cx, |p| p.move_node(clip, node, to))
                 .is_some()
             {
-                self.say(format!("Moved {name} to position {} in the chain", to + 1));
+                self.say(format!("Moved {name}"));
             }
         }
         cx.notify();
@@ -329,9 +329,9 @@ impl Workspace {
             )
             .tooltip(tip(
                 if generator {
-                    "What this clip is made from"
+                    "Source"
                 } else {
-                    "Click to inspect · drag to reorder"
+                    "Drag to reorder"
                 },
                 None,
             ));

@@ -18,7 +18,7 @@ use videode_core::{
 
 use crate::actions::OpenOutput;
 use crate::theme::{self, Category, CategoryExt, c, hex};
-use crate::ui::{button, cmd_key, field_row, icon_button, kbd, pane_header, swatch, tip};
+use crate::ui::{button, field_row, icon_button, pane_header, swatch, tip};
 use crate::workspace::{FieldEdit, FieldTarget, PointerDrag, Workspace};
 
 const INSPECTOR_W: f32 = 304.;
@@ -77,7 +77,7 @@ impl Workspace {
     pub(crate) fn add_node(&mut self, clip: ClipId, kind: NodeKind, cx: &mut Context<Self>) {
         if let Some(id) = self.apply("add node", cx, |p| p.add_node(clip, kind)) {
             self.focus_node = Some(id);
-            self.say(format!("Added {} · {} to undo", kind.name(), cmd_key("Z")));
+            self.say(format!("Added {}", kind.name()));
         }
     }
 
@@ -90,7 +90,7 @@ impl Workspace {
             if self.focus_node == Some(node) {
                 self.focus_node = None;
             }
-            self.say(format!("Removed {name} · {} to undo", cmd_key("Z")));
+            self.say(format!("Removed {name}"));
         }
     }
 
@@ -375,23 +375,14 @@ impl Workspace {
         let p = self.project();
         let seq = &p.sequence;
         let o = &p.output;
-        let hint = |text: &'static str, key: SharedString| {
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .child(text)
-                .child(kbd(key))
-        };
         let clips = seq.clips.len();
         div()
             .child(title_block(
                 format!("{} Sequence", seq.name),
                 if clips == 0 {
-                    "Sequence node · empty".into()
+                    "Empty".into()
                 } else {
-                    format!("Sequence node · {clips} clips · {} nodes", p.node_count())
+                    format!("{clips} clips · {} nodes", p.node_count())
                 },
                 None,
             ))
@@ -430,19 +421,6 @@ impl Workspace {
                         .into_any_element(),
                 ],
             ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .px(px(12.))
-                    .py(px(14.))
-                    .text_color(c(hex::INK_DIM))
-                    .child(hint("Select a clip to see its nodes", "click".into()))
-                    .child(hint("Peek inside the selected clip", "Tab".into()))
-                    .child(hint("See the whole sequence as a graph", "⇧ Tab".into()))
-                    .child(hint("Find any action", cmd_key("K"))),
-            )
             .into_any_element()
     }
 
@@ -492,13 +470,6 @@ impl Workspace {
                         add_node_items(menu.min_w(px(200.)), id, kind, ws.clone())
                     }),
             ),
-        )
-        .child(
-            div()
-                .px(px(12.))
-                .pb(px(14.))
-                .text_color(c(hex::INK_FAINT))
-                .child("Drag a label to scrub · Shift ×10 · Alt ÷10 · double-click resets"),
         )
         .into_any_element()
     }
@@ -566,7 +537,7 @@ impl Workspace {
                     rows.push(
                         div()
                             .text_color(c(hex::WARN))
-                            .child("File not found · relinking arrives with media import (M3)")
+                            .child("File not found")
                             .into_any_element(),
                     );
                 }
@@ -629,10 +600,7 @@ impl Workspace {
             .when(is_number, |d| {
                 d.cursor(CursorStyle::ResizeLeftRight)
                     .hover(|s| s.text_color(c(hex::INK)))
-                    .tooltip(tip(
-                        "Drag to scrub · Shift ×10 · Alt ÷10 · double-click to reset",
-                        None,
-                    ))
+                    .tooltip(tip("Drag to scrub · double-click to reset", None))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, e: &MouseDownEvent, window, cx| {
@@ -864,10 +832,17 @@ impl Workspace {
         div()
             .child(title_block(
                 "Output".into(),
-                format!("Output node · renders {} Sequence to a file", self.project().sequence.name),
+                format!("{} Sequence", self.project().sequence.name),
                 None,
             ))
-            .child(section_shell(Category::Output, "Export", false, false, close, rows))
+            .child(section_shell(
+                Category::Output,
+                "Export",
+                false,
+                false,
+                close,
+                rows,
+            ))
             .child(
                 div()
                     .flex()
@@ -875,12 +850,15 @@ impl Workspace {
                     .gap(px(8.))
                     .p(px(12.))
                     .text_color(c(hex::INK_DIM))
-                    .child(format!("Range: whole sequence · {}", self.tc(self.project().end())))
+                    .child(format!(
+                        "Whole sequence · {}",
+                        self.tc(self.project().end())
+                    ))
                     .child(
                         button("render", Some("upload"), "Render", true)
                             .justify_center()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.say("Rendering arrives with export (M5) · these settings are saved with the project");
+                                this.say("Rendering isn't available yet");
                                 cx.notify();
                             })),
                     ),
