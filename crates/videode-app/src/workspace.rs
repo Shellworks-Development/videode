@@ -168,6 +168,9 @@ pub struct Workspace {
     /// The picture in the viewer, and the frame being decoded to replace it.
     pub(crate) frame: Option<ViewerFrame>,
     pub(crate) frame_pending: Option<FrameKey>,
+    /// Bumped whenever the viewer wants a different frame; replies from
+    /// older requests are dropped.
+    pub(crate) frame_generation: u64,
     /// A frame that failed to decode, so it isn't retried every render.
     pub(crate) frame_failed: Option<FrameKey>,
     /// The viewer's screen in window coordinates, captured each frame.
@@ -221,6 +224,7 @@ impl Workspace {
             media_root: std::env::current_dir().unwrap_or_default(),
             frame: None,
             frame_pending: None,
+            frame_generation: 0,
             frame_failed: None,
             viewer_bounds: Default::default(),
             title: String::new(),
@@ -677,15 +681,17 @@ impl Workspace {
     }
 
     pub(crate) fn pointer_up(&mut self, cx: &mut Context<Self>) {
-        if let Some(PointerDrag::Node {
-            clip,
-            node,
-            dx,
-            moved: true,
-            ..
-        }) = self.pdrag.take()
-        {
-            self.drop_node(clip, node, dx, cx);
+        match self.pdrag.take() {
+            Some(PointerDrag::Node {
+                clip,
+                node,
+                dx,
+                moved: true,
+                ..
+            }) => self.drop_node(clip, node, dx, cx),
+            // Each scrub is its own undo step, even from the same spot.
+            Some(PointerDrag::Scrub { .. }) => self.doc.end_coalescing(),
+            _ => {}
         }
         cx.notify();
     }
@@ -825,6 +831,7 @@ impl Workspace {
         if self.modal.is_some() {
             self.modal = None;
         } else if self.pdrag.take().is_some() {
+            self.doc.end_coalescing();
         } else if self.peek.is_some() {
             self.peek = None;
         } else if self.view == View::Graph {

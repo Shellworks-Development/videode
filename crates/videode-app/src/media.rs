@@ -114,11 +114,11 @@ impl Workspace {
             return;
         }
         let root = self.media_root.clone();
-        for m in &mut self.doc.project.media {
+        self.doc.rebase_media(|m| {
             if m.path.is_relative() {
                 m.path = root.join(&m.path);
             }
-        }
+        });
         self.media_root = dir.to_path_buf();
     }
 
@@ -360,6 +360,7 @@ impl Workspace {
                 window.drop_image(old.image).ok();
             }
             self.frame_pending = None;
+            self.frame_generation += 1;
             return;
         };
         let shown = self.frame.as_ref().is_some_and(|f| f.key == key);
@@ -376,6 +377,10 @@ impl Workspace {
             max_h: key.h,
             slot: VIEWER_SLOT,
         };
+        // Replies to anything asked for before this are stale: requests to
+        // different files run on different workers and can finish out of order.
+        self.frame_generation += 1;
+        let generation = self.frame_generation;
         let pool = &cx.global::<MediaEngine>().pool;
         if let Some(p) = pool.cached(&req) {
             self.show_frame(key, &p, window);
@@ -386,9 +391,10 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let result = rx.await;
             this.update_in(cx, |ws, window, cx| {
-                if ws.frame_pending.as_ref() == Some(&key) {
-                    ws.frame_pending = None;
+                if ws.frame_generation != generation {
+                    return;
                 }
+                ws.frame_pending = None;
                 match result {
                     Ok(Ok(p)) => ws.show_frame(key, &p, window),
                     // A newer frame was asked for; it will arrive instead.

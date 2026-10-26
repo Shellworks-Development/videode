@@ -74,7 +74,26 @@ impl Document {
         offline
     }
 
+    /// Rewrites media paths everywhere they're kept, history included, so
+    /// undo never brings back a path that no longer resolves. Not an edit.
+    pub fn rebase_media(&mut self, mut f: impl FnMut(&mut crate::project::Media)) {
+        for project in std::iter::once(&mut self.project)
+            .chain(std::iter::once(&mut self.saved))
+            .chain(self.undo.iter_mut().map(|e| &mut e.project))
+            .chain(self.redo.iter_mut().map(|e| &mut e.project))
+        {
+            project.media.iter_mut().for_each(&mut f);
+        }
+    }
+
+    /// Ends the current run of coalesced edits, so the next one starts a new
+    /// undo step even if it has the same key (one per drag gesture).
+    pub fn end_coalescing(&mut self) {
+        self.coalesce = None;
+    }
+
     pub fn mark_saved(&mut self, path: PathBuf) {
+        self.coalesce = None;
         self.saved = self.project.clone();
         self.path = Some(path);
     }
@@ -302,5 +321,42 @@ mod tests {
             !d.project.media[0].offline,
             "undo doesn't bring back stale offline flags"
         );
+    }
+
+    #[test]
+    fn rebased_paths_survive_undo() {
+        let (mut d, _) = doc();
+        d.edit("split", |p| {
+            let c = p.sequence.clips[0].id;
+            p.split(c, 50)
+        })
+        .unwrap();
+        d.rebase_media(|m| m.path = PathBuf::from("/abs").join(&m.path));
+        d.undo();
+        assert!(d.project.media[0].path.starts_with("/abs"));
+        d.redo();
+        assert!(d.project.media[0].path.starts_with("/abs"));
+    }
+
+    #[test]
+    fn ending_coalescing_starts_a_new_step() {
+        let (mut d, c) = doc();
+        let g = d.edit("add", |p| p.add_node(c, NodeKind::Grade)).unwrap();
+        for v in [0.1, 0.2] {
+            d.edit_coalesced("exposure", "g.exposure", |p| {
+                p.set_param(c, g, "exposure", Value::Number(v))
+            })
+            .unwrap();
+            d.end_coalescing();
+        }
+        d.undo();
+        let exposure = d
+            .project
+            .clip(c)
+            .unwrap()
+            .node(g)
+            .unwrap()
+            .number("exposure");
+        assert_eq!(exposure, 0.1, "only the second gesture is undone");
     }
 }
