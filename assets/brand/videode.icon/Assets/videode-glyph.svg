@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="192 184 640 640">
+  <title>videode glyph</title>
+  <!-- The mark without its tile, for use on PLUGE surfaces. -->
+  <g fill="none" stroke="#f1ede0" stroke-width="64" stroke-linecap="round">
+    <path d="M300 300 C 300 520, 512 560, 512 724"/>
+    <path d="M724 300 C 724 520, 512 560, 512 724"/>
+  </g>
+  <g fill="#111113" stroke-width="44">
+    <circle cx="300" cy="300" r="74" stroke="#3cc4c4"/>
+    <circle cx="724" cy="300" r="74" stroke="#c43cc4"/>
+  </g>
+  <rect x="402" y="648" width="220" height="152" rx="34" fill="#4a62d0"/>
+</svg>
