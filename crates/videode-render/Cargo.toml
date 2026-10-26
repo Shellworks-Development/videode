@@ -1,0 +1,10 @@
+[package]
+name = "videode-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+videode-core.workspace = true
+videode-media.workspace = true

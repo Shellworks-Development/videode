@@ -1,12 +1,34 @@
-//! What a clip looks like at one frame, from the nodes the viewer can apply
-//! without a GPU effects pass: Transform (position, scale), Crop, Opacity and
-//! Fade. Rotation, Grade and Blur are carried but not yet drawn.
+//! What a clip looks like at one frame: where it sits (Transform, Crop),
+//! how see-through it is (Opacity, Fade), and what is done to its pixels
+//! (Grade, Blur, rotation).
 
 use crate::node::NodeKind;
 use crate::project::Clip;
 use crate::time::Frame;
 
+/// One Grade node's settings.
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grade {
+    /// Stops, applied in linear light.
+    pub exposure: f64,
+    /// White balance in kelvin; 6500 is neutral, higher is warmer.
+    pub temperature: f64,
+    /// Percent; 100 is unchanged.
+    pub saturation: f64,
+    /// Percent; 100 is unchanged.
+    pub contrast: f64,
+}
+
+impl Grade {
+    pub fn is_neutral(&self) -> bool {
+        self.exposure == 0.
+            && self.temperature == 6500.
+            && self.saturation == 100.
+            && self.contrast == 100.
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Look {
     /// 0–1, after Opacity and Fade.
     pub opacity: f64,
@@ -17,6 +39,12 @@ pub struct Look {
     pub y: f64,
     /// Fractions (0–0.5) cut from each edge: left, right, top, bottom.
     pub crop: [f64; 4],
+    /// Degrees clockwise.
+    pub rotation: f64,
+    /// Grades in chain order.
+    pub grades: Vec<Grade>,
+    /// Blur radius in sequence pixels (several Blurs add up).
+    pub blur: f64,
 }
 
 impl Default for Look {
@@ -27,6 +55,9 @@ impl Default for Look {
             x: 0.,
             y: 0.,
             crop: [0.; 4],
+            rotation: 0.,
+            grades: Vec::new(),
+            blur: 0.,
         }
     }
 }
@@ -42,7 +73,20 @@ pub fn look_at(clip: &Clip, at: Frame) -> Look {
                 l.x = l.x * n.number("scale") / 100. + n.number("x");
                 l.y = l.y * n.number("scale") / 100. + n.number("y");
                 l.scale *= n.number("scale") / 100.;
+                l.rotation += n.number("rotation");
             }
+            NodeKind::Grade => {
+                let g = Grade {
+                    exposure: n.number("exposure"),
+                    temperature: n.number("temperature"),
+                    saturation: n.number("saturation"),
+                    contrast: n.number("contrast"),
+                };
+                if !g.is_neutral() {
+                    l.grades.push(g);
+                }
+            }
+            NodeKind::Blur => l.blur += n.number("radius"),
             NodeKind::Crop => {
                 for (i, key) in ["left", "right", "top", "bottom"].into_iter().enumerate() {
                     l.crop[i] = (l.crop[i] + n.number(key) / 100.).min(0.5);
@@ -114,6 +158,31 @@ mod tests {
         assert_eq!(l.scale, 1.);
         assert_eq!((l.x, l.y), (5., -4.));
         assert_eq!(l.crop, [0.1, 0., 0., 0.5]);
+    }
+
+    #[test]
+    fn pixel_effects_are_collected_in_order() {
+        let c = clip_with(&[
+            (NodeKind::Grade, &[("exposure", 1.)]),
+            (NodeKind::Grade, &[]),
+            (NodeKind::Blur, &[("radius", 3.)]),
+            (NodeKind::Transform, &[("rotation", 10.)]),
+            (NodeKind::Grade, &[("saturation", 0.)]),
+            (NodeKind::Transform, &[("rotation", 5.)]),
+        ]);
+        let l = look_at(&c, 0);
+        let exposures: Vec<_> = l
+            .grades
+            .iter()
+            .map(|g| (g.exposure, g.saturation))
+            .collect();
+        assert_eq!(
+            exposures,
+            [(1., 100.), (0., 0.)],
+            "neutral grades are skipped"
+        );
+        assert_eq!(l.blur, 3.);
+        assert_eq!(l.rotation, 15.);
     }
 
     #[test]
