@@ -46,6 +46,7 @@ actions!(
         OpenOutput,
         BypassNode,
         AddNodeMenu,
+        ImportMedia,
     ]
 );
 
@@ -68,6 +69,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-e", Export, ctx),
         KeyBinding::new("secondary-,", OpenSettings, ctx),
         KeyBinding::new("secondary-k", CommandPalette, ctx),
+        KeyBinding::new("secondary-i", ImportMedia, ctx),
         KeyBinding::new("escape", Deselect, keys),
         KeyBinding::new("tab", TogglePeek, keys),
         KeyBinding::new("shift-tab", ToggleGraph, keys),

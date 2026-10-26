@@ -6,6 +6,7 @@ mod brand;
 mod dialogs;
 mod graph_view;
 mod inspector;
+mod media;
 mod motion;
 mod palette;
 mod panels;
@@ -56,6 +57,7 @@ pub fn init(cx: &mut App) {
     gpui_kit::init(cx);
     theme::apply(cx);
     settings::init(cx);
+    media::init(cx);
     actions::bind_keys(cx);
 }
 

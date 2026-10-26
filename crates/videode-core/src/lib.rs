@@ -7,6 +7,7 @@ pub mod edit;
 pub mod fuzzy;
 pub mod graph;
 pub mod kdl_io;
+pub mod look;
 pub mod node;
 pub mod project;
 pub mod settings;

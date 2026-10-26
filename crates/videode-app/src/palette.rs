@@ -97,6 +97,7 @@ fn actions() -> Vec<(&'static str, Box<dyn Action>, Unavailable)> {
         ("New project", Box::new(NewProject), always),
         ("Open project…", Box::new(OpenProject), always),
         ("Open demo project", Box::new(OpenDemo), always),
+        ("Import media…", Box::new(ImportMedia), always),
         ("Save", Box::new(SaveProject), always),
         ("Save as…", Box::new(SaveProjectAs), always),
         ("Settings", Box::new(OpenSettings), always),
