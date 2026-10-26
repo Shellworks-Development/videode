@@ -2,6 +2,7 @@
 //! the viewer and thumbnails, and a small pool of decoder threads with a
 //! frame cache. Pictures come out as BGRA, the order GPUI draws.
 
+pub mod audio;
 pub mod demo;
 mod pool;
 
