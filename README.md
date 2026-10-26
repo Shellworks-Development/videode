@@ -11,44 +11,56 @@ Inside, everything is a node: media, clips, effects, tracks, the sequence and th
 
 ## Status
 
-Milestone M2: the node views. Every clip is a chain of nodes you can see and edit:
+Milestone M3: media and preview. The viewer shows real footage:
 
-- **Inspector:** every value is editable. Click to type, drag the label to scrub (Shift ×10, Alt ÷10, double-click resets), ↑/↓ to step. Bypass, remove and add nodes. Export opens the Output node.
-- **Peek (Tab):** the selected clip's nodes unfold under it; drag to reorder, + to add, Del removes, ⇧B bypasses.
-- **Graph (⇧Tab):** the whole sequence as one graph: clips → tracks → Composite/Mix → Sequence → Output. Drag to pan, scroll to zoom, double-click a clip to open it in the timeline.
-- **Command palette (Ctrl/Cmd K):** fuzzy search over actions, nodes, clips and media; A opens it on "Add".
+- **Import:** File → Import media…, Ctrl/Cmd I, the bin's import button, or drop files on the window. Files are probed with FFmpeg (codec, size, frame rate, duration, audio) and added as one undo step.
+- **Bin:** thumbnails decode in the background; missing files show as offline.
+- **Viewer:** frame-accurate at the playhead, decoded at display size by a pool of decoder threads with a frame cache. Transform (position, scale), Crop, Opacity and Fade are applied; titles draw on top.
+- **Demo:** File → Open demo project generates its test-pattern footage with the `ffmpeg` tool on first open.
 
-M1's timeline editing (move, trim, split, blade, ripple delete, snapping, zoom, undo/redo, `.vde` KDL files) is all still there. File → Open demo project loads a sample sequence. Picture, sound and export arrive in M3–M5.
+From M2: every clip is a chain of nodes. Edit any value in the inspector, peek at a clip's nodes with **Tab**, see the whole sequence as a graph with **Shift+Tab**, and search everything with the command palette (**Ctrl/Cmd K**). From M1: timeline editing, undo/redo and `.vde` project files. Playback with sound and export arrive in M4–M5.
 
-![M2 peek](docs/m2-peek.png)
-![M2 graph](docs/m2-graph.png)
+![M3 viewer and bin](docs/m3-media.png)
 
 ## Build
 
-Requires a recent stable Rust toolchain.
+Requires a recent stable Rust toolchain and FFmpeg (shared libraries plus the `ffmpeg` tool, developed against 9.0), found through `pkg-config`.
 
 ```sh
 cargo run -p videode-app            # opens the editor
 cargo run -p videode-app --example snapshot -- out.png 1440 900        # offscreen screenshot
 cargo run -p videode-app --example snapshot -- out.png 1440 900 demo   # same, demo project
                                                                       # (also: settings, about, splash@0.4,
-                                                                      #  peek, graph, output, focus, edit, palette=<q>)
+                                                                      #  media, peek, graph, output, focus, edit, palette=<q>)
 ./scripts/brand.sh                     # regenerate icons from assets/brand/*.svg
 ./packaging/linux/install.sh           # install binary, launcher and icons to ~/.local
 ```
 
-Linux needs the usual GPUI system libraries (Debian/Ubuntu):
+macOS:
+
+```sh
+brew install ffmpeg pkg-config
+```
+
+Linux (Debian/Ubuntu) needs GPUI's system libraries and FFmpeg's development packages:
 
 ```sh
 sudo apt install libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev \
-  libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+  libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 pkg-config clang \
+  ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+  libswresample-dev libavfilter-dev libavdevice-dev
 ```
+
+Windows: download a shared FFmpeg build (for example from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases)), set `FFMPEG_DIR` to it, put its `bin` folder on `PATH`, and install LLVM for `libclang`.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and pull requests.
 
 ## Layout
 
 ```
 crates/
   videode-core/   project model and node graph engine (no UI)
+  videode-media/  FFmpeg probing, frame-accurate decoding, decoder pool, demo footage
   videode-app/    the GPUI application: window, theme, editor shell
 assets/fonts/     Geist and Geist Mono (SIL OFL 1.1)
 mockup/           approved HTML mockup with synthetic demo media
@@ -56,4 +68,10 @@ mockup/           approved HTML mockup with synthetic demo media
 
 ## License
 
-MIT or Apache-2.0. Bundled fonts are under the SIL Open Font License (`assets/fonts/OFL-Geist.txt`); icons are Lucide (ISC), via GPUI Kit.
+videode is free software under the [GNU Lesser General Public License v3.0 or later](COPYING.LESSER), which builds on the [GNU GPL v3](COPYING).
+
+FFmpeg is linked dynamically and is not bundled. If you distribute videode with an FFmpeg build that includes GPL components, that distribution as a whole falls under the GPL.
+
+Bundled fonts are under the SIL Open Font License (`assets/fonts/OFL-Geist.txt`); icons are Lucide (ISC), via GPUI Kit.
+
+Found a security problem? See [SECURITY.md](SECURITY.md).
