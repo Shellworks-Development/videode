@@ -40,6 +40,9 @@ pub struct MediaEngine {
     pub strips: HashMap<(PathBuf, i64), Thumb>,
     /// Demo footage is being generated.
     pub generating: bool,
+    /// Pictures are decoded. Off in tests: decoder threads would wake
+    /// tasks on GPUI's single-threaded test scheduler.
+    pub decode: bool,
 }
 
 impl Global for MediaEngine {}
@@ -51,6 +54,7 @@ pub fn init(cx: &mut App) {
         thumbs: HashMap::new(),
         strips: HashMap::new(),
         generating: false,
+        decode: !cfg!(test),
     });
 }
 
@@ -351,7 +355,7 @@ impl Workspace {
         ms: i64,
         cx: &mut Context<Self>,
     ) -> Option<Arc<RenderImage>> {
-        if m.offline || m.kind == MediaKind::Audio {
+        if m.offline || m.kind == MediaKind::Audio || !cx.global::<MediaEngine>().decode {
             return None;
         }
         let key = (self.media_path(m), ms);
@@ -388,7 +392,7 @@ impl Workspace {
     }
 
     pub(crate) fn thumbnail(&self, m: &Media, cx: &mut Context<Self>) -> Option<Arc<RenderImage>> {
-        if m.offline || m.kind == MediaKind::Audio {
+        if m.offline || m.kind == MediaKind::Audio || !cx.global::<MediaEngine>().decode {
             return None;
         }
         let path = self.media_path(m);
@@ -490,6 +494,9 @@ impl Workspace {
         // different files run on different workers and can finish out of order.
         self.frame_generation += 1;
         let generation = self.frame_generation;
+        if !cx.global::<MediaEngine>().decode {
+            return;
+        }
         let pool = &cx.global::<MediaEngine>().pool;
         if let Some(p) = pool.cached(&req) {
             self.frame_source = Some((key, p));
