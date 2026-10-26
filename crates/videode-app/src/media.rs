@@ -21,6 +21,8 @@ use crate::workspace::{BinTab, View, Workspace};
 
 pub const THUMB_W: u32 = 160;
 pub const THUMB_H: u32 = 90;
+/// Filmstrip frames are decoded no larger than this.
+const STRIP_MAX: (u32, u32) = (128, 72);
 /// Viewer frames are decoded no larger than this.
 const VIEWER_MAX: (u32, u32) = (1920, 1080);
 const VIEWER_SLOT: u64 = 1;
@@ -34,6 +36,8 @@ pub enum Thumb {
 pub struct MediaEngine {
     pub pool: FramePool,
     pub thumbs: HashMap<PathBuf, Thumb>,
+    /// Filmstrip frames on timeline clips, by file and millisecond.
+    pub strips: HashMap<(PathBuf, i64), Thumb>,
     /// Demo footage is being generated.
     pub generating: bool,
 }
@@ -45,6 +49,7 @@ pub fn init(cx: &mut App) {
         // Three decoders and 384 MB of decoded frames.
         pool: FramePool::new(3, 384),
         thumbs: HashMap::new(),
+        strips: HashMap::new(),
         generating: false,
     });
 }
@@ -338,6 +343,50 @@ impl Workspace {
     /* ---------- thumbnails ---------- */
 
     /// The bin thumbnail for `m`, starting a decode the first time.
+    /// A small frame of `m` at `ms` for a clip's filmstrip, decoded in the
+    /// background the first time.
+    pub(crate) fn strip_frame(
+        &self,
+        m: &Media,
+        ms: i64,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        if m.offline || m.kind == MediaKind::Audio {
+            return None;
+        }
+        let key = (self.media_path(m), ms);
+        match cx.global::<MediaEngine>().strips.get(&key) {
+            Some(Thumb::Ready(img)) => return Some(img.clone()),
+            Some(_) => return None,
+            None => {}
+        }
+        let engine = cx.global_mut::<MediaEngine>();
+        engine.strips.insert(key.clone(), Thumb::Loading);
+        let mut h = DefaultHasher::new();
+        key.hash(&mut h);
+        let rx = engine.pool.request(FrameRequest {
+            path: key.0.clone(),
+            time: ms as f64 / 1000.,
+            max_w: STRIP_MAX.0,
+            max_h: STRIP_MAX.1,
+            // Its own slot, so tiles never replace each other in the queue.
+            slot: h.finish() | 1 << 62,
+        });
+        cx.spawn(async move |this, cx| {
+            let thumb = match rx.await {
+                Ok(Ok(p)) => Thumb::Ready(render_image(&p)),
+                _ => Thumb::Failed,
+            };
+            this.update(cx, |_, cx| {
+                cx.global_mut::<MediaEngine>().strips.insert(key, thumb);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        None
+    }
+
     pub(crate) fn thumbnail(&self, m: &Media, cx: &mut Context<Self>) -> Option<Arc<RenderImage>> {
         if m.offline || m.kind == MediaKind::Audio {
             return None;

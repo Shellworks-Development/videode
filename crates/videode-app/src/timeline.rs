@@ -6,13 +6,15 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnimationExt as _, AnyElement, Bounds, BoxShadow, Context, CursorStyle, DispatchPhase,
-    FontWeight, Hsla, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, ScrollWheelEvent, SharedString, Window, canvas, div, point, px,
+    FontWeight, Hsla, ImageSource, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ObjectFit, Pixels, Point, RenderImage, ScrollWheelEvent, SharedString, Window,
+    canvas, div, img, point, px,
 };
 use videode_core::{
     Clip, ClipId, ClipKind, Frame, NodeKind, StreamKind, Track, TrackId, snap, time,
@@ -853,6 +855,7 @@ impl Workspace {
                 if x + cw < 0. || x > w {
                     continue;
                 }
+                let strip = self.filmstrip(clip, x, cw, w, h, cx);
                 let wave = (clip.kind == ClipKind::Audio)
                     .then(|| clip.media.and_then(|m| self.project().media(m)))
                     .flatten()
@@ -864,7 +867,7 @@ impl Workspace {
                         visible: ((-x).max(0.), (w - x).min(cw)),
                     });
                 children.push(
-                    self.render_clip(clip, t, x, y, cw, h, wave)
+                    self.render_clip(clip, t, x, y, cw, h, wave, strip)
                         .into_any_element(),
                 );
             }
@@ -957,6 +960,7 @@ impl Workspace {
         w: f32,
         h: f32,
         wave: Option<WaveDraw>,
+        strip: Vec<(f32, f32, Arc<RenderImage>)>,
     ) -> impl IntoElement + use<> {
         let p = self.project();
         let selected = self.selection == Some(clip.id);
@@ -1026,6 +1030,16 @@ impl Workspace {
                 }])
             })
             .when(track.locked, |d| d.opacity(0.7))
+            .children(strip.into_iter().map(|(left, tile_w, image)| {
+                img(ImageSource::Render(image))
+                    .absolute()
+                    .left(px(left))
+                    .top_0()
+                    .w(px(tile_w))
+                    .h_full()
+                    .object_fit(ObjectFit::Cover)
+                    .opacity(if muted { 0.15 } else { 0.35 })
+            }))
             .children(wave.map(|wave| wave.element(muted)))
             .child(
                 div()
@@ -1101,6 +1115,48 @@ impl Workspace {
             }))
             .child(edge_handle(true))
             .child(edge_handle(false))
+    }
+}
+
+impl Workspace {
+    /// Filmstrip tiles for the on-screen part of a video clip: left edge
+    /// (from the clip's left), width and image. Tile times are rounded to a
+    /// quarter second so scrolling reuses decoded frames.
+    fn filmstrip(
+        &self,
+        clip: &Clip,
+        x: f32,
+        cw: f32,
+        lanes_w: f32,
+        h: f32,
+        cx: &mut Context<Self>,
+    ) -> Vec<(f32, f32, Arc<RenderImage>)> {
+        if clip.kind != ClipKind::Video {
+            return Vec::new();
+        }
+        let Some(m) = clip.media.and_then(|id| self.project().media(id)) else {
+            return Vec::new();
+        };
+        let fps = self.fps();
+        let tile_w = ((h - 7.) * 16. / 9.).max(16.);
+        let first = ((-x).max(0.) / tile_w).floor() as i64;
+        let last = (((lanes_w - x).min(cw)) / tile_w).ceil() as i64;
+        let m = m.clone();
+        let mut tiles = Vec::new();
+        for i in first.max(0)..last.max(0) {
+            let left = i as f32 * tile_w;
+            let frames = clip.source_in as f64 + left as f64 / self.tl.ppf as f64;
+            let secs = if m.kind == videode_core::MediaKind::Image {
+                0.
+            } else {
+                frames / fps.as_f64()
+            };
+            let ms = ((secs * 4.).round() / 4. * 1000.) as i64;
+            if let Some(image) = self.strip_frame(&m, ms, cx) {
+                tiles.push((left, tile_w.min(cw - left), image));
+            }
+        }
+        tiles
     }
 }
 
