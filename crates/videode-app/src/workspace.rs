@@ -416,6 +416,17 @@ impl Workspace {
     /// Drops a selection that no longer exists and flashes the clips that
     /// changed, so it's clear what undo or redo touched.
     fn after_history_change(&mut self, before: &Project) {
+        // Undo can bring back a path that isn't on disk (or one that now is).
+        if self
+            .doc
+            .project
+            .media
+            .iter()
+            .map(|m| &m.path)
+            .ne(before.media.iter().map(|m| &m.path))
+        {
+            self.refresh_media();
+        }
         let changed: Vec<ClipId> = self
             .doc
             .project
