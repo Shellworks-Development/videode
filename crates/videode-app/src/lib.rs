@@ -12,6 +12,7 @@ mod palette;
 mod panels;
 mod peek;
 pub mod settings;
+mod sound;
 #[cfg(test)]
 mod tests;
 pub mod theme;
@@ -58,6 +59,7 @@ pub fn init(cx: &mut App) {
     theme::apply(cx);
     settings::init(cx);
     media::init(cx);
+    sound::init(cx);
     actions::bind_keys(cx);
 }
 

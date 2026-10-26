@@ -931,15 +931,17 @@ impl Workspace {
             )
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .px(px(16.))
+                    .px(px(20.))
                     .pt(px(4.))
                     .pb(px(8.))
-                    .child(screen),
+                    .child(screen)
+                    .child(meters(self.meters)),
             )
             .child(transport)
     }
@@ -1015,4 +1017,49 @@ fn centered(content: impl IntoElement) -> AnyElement {
         .justify_center()
         .child(content)
         .into_any_element()
+}
+
+/// Peak meters, left and right, on a −60 to 0 dB scale: green, then yellow
+/// above −12 dB, red above −3 dB.
+fn meters(levels: [f32; 2]) -> impl IntoElement {
+    let pos = |db: f32| ((db + 60.) / 60.).clamp(0., 1.);
+    let bar = |level: f32| {
+        let db = if level > 0. {
+            20. * level.log10()
+        } else {
+            -96.
+        };
+        let top = pos(db);
+        let band = |from: f32, to: f32, color: u32| {
+            let (lo, hi) = (pos(from), pos(to).min(top));
+            (hi > lo).then(|| {
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom(gpui_kit::relative(lo))
+                    .h(gpui_kit::relative(hi - lo))
+                    .bg(c(color))
+            })
+        };
+        div()
+            .relative()
+            .w(px(4.))
+            .h_full()
+            .rounded(px(1.))
+            .overflow_hidden()
+            .bg(c(hex::PLUGE_RAISED))
+            .children(band(-60., -12., 0x45c45a))
+            .children(band(-12., -3., 0xc9c43c))
+            .children(band(-3., 0., 0xe05a4f))
+    };
+    div()
+        .absolute()
+        .right(px(6.))
+        .top(px(4.))
+        .bottom(px(8.))
+        .flex()
+        .gap(px(2.))
+        .child(bar(levels[0]))
+        .child(bar(levels[1]))
 }

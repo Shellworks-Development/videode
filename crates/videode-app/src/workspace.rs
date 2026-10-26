@@ -98,6 +98,8 @@ pub(crate) struct Playback {
     origin: Frame,
     started: Instant,
     pub(crate) speed: f64,
+    /// The sound has been started from this playback's current position.
+    pub(crate) sound_started: bool,
 }
 
 pub(crate) struct Status {
@@ -170,6 +172,12 @@ pub struct Workspace {
     /// Bumped whenever the viewer wants a different frame; replies from
     /// older requests are dropped.
     pub(crate) frame_generation: u64,
+    /// The output engine is playing this workspace's sequence.
+    pub(crate) sound_live: bool,
+    /// The mix last sent to the output engine.
+    pub(crate) sent_mix: Option<videode_audio::Mix>,
+    /// Level meter readings, left and right (0–1).
+    pub(crate) meters: [f32; 2],
     /// A frame that failed to decode, so it isn't retried every render.
     pub(crate) frame_failed: Option<FrameKey>,
     /// The viewer's screen in window coordinates, captured each frame.
@@ -224,6 +232,9 @@ impl Workspace {
             frame: None,
             frame_pending: None,
             frame_generation: 0,
+            sound_live: false,
+            sent_mix: None,
+            meters: [0.; 2],
             frame_failed: None,
             viewer_bounds: Default::default(),
             title: String::new(),
@@ -408,6 +419,7 @@ impl Workspace {
         if let Some(pb) = &mut self.playback {
             pb.origin = self.playhead;
             pb.started = Instant::now();
+            pb.sound_started = false;
         }
     }
 
@@ -971,6 +983,7 @@ impl Workspace {
             origin: self.playhead,
             started: Instant::now(),
             speed,
+            sound_started: false,
         });
     }
 
@@ -1055,13 +1068,23 @@ impl Workspace {
         self.nudge(end - t, cx);
     }
 
-    /// Advances the playhead from the wall clock while playing.
-    fn tick_playback(&mut self, window: &mut Window) {
+    /// Advances the playhead while playing: from the sound's clock at normal
+    /// speed, otherwise from the wall clock.
+    fn tick_playback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let heard = self.sync_sound(cx);
+        if self.tick_meters(cx) {
+            window.request_animation_frame();
+        }
         let Some(pb) = &self.playback else {
             return;
         };
-        let elapsed = pb.started.elapsed().as_secs_f64();
-        let frame = pb.origin + (elapsed * self.fps().as_f64() * pb.speed).floor() as Frame;
+        let frame = match heard {
+            Some(secs) => (secs * self.fps().as_f64() + 1e-6).floor() as Frame,
+            None => {
+                let elapsed = pb.started.elapsed().as_secs_f64();
+                pb.origin + (elapsed * self.fps().as_f64() * pb.speed).floor() as Frame
+            }
+        };
         let end = self.doc.project.end();
         if frame >= end && pb.speed > 0. {
             self.playhead = end;
@@ -1096,7 +1119,7 @@ fn capitalize(s: &str) -> String {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.tick_playback(window);
+        self.tick_playback(window, cx);
         self.sync_viewer_frame(window, cx);
         self.update_title(window);
         let editing = self.modal.is_none();

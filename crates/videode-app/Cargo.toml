@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 videode-core.workspace = true
 videode-media.workspace = true
+videode-audio.workspace = true
 gpui-kit.workspace = true
 anyhow.workspace = true
 dirs = "6"

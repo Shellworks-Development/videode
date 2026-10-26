@@ -853,7 +853,20 @@ impl Workspace {
                 if x + cw < 0. || x > w {
                     continue;
                 }
-                children.push(self.render_clip(clip, t, x, y, cw, h).into_any_element());
+                let wave = (clip.kind == ClipKind::Audio)
+                    .then(|| clip.media.and_then(|m| self.project().media(m)))
+                    .flatten()
+                    .and_then(|m| self.waveform(m, cx))
+                    .map(|peaks| WaveDraw {
+                        peaks,
+                        start: fps.frames_to_seconds(clip.source_in),
+                        secs_per_px: 1. / (fps.as_f64() * self.tl.ppf as f64),
+                        visible: ((-x).max(0.), (w - x).min(cw)),
+                    });
+                children.push(
+                    self.render_clip(clip, t, x, y, cw, h, wave)
+                        .into_any_element(),
+                );
             }
             y += h;
         }
@@ -934,6 +947,7 @@ impl Workspace {
             })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_clip(
         &self,
         clip: &Clip,
@@ -942,6 +956,7 @@ impl Workspace {
         y: f32,
         w: f32,
         h: f32,
+        wave: Option<WaveDraw>,
     ) -> impl IntoElement + use<> {
         let p = self.project();
         let selected = self.selection == Some(clip.id);
@@ -1011,6 +1026,7 @@ impl Workspace {
                 }])
             })
             .when(track.locked, |d| d.opacity(0.7))
+            .children(wave.map(|wave| wave.element(muted)))
             .child(
                 div()
                     .h(px(18.))
@@ -1085,6 +1101,53 @@ impl Workspace {
             }))
             .child(edge_handle(true))
             .child(edge_handle(false))
+    }
+}
+
+/// An audio clip's waveform, drawn behind its labels.
+pub(crate) struct WaveDraw {
+    peaks: std::sync::Arc<Vec<f32>>,
+    /// File time at the clip's left edge.
+    start: f64,
+    secs_per_px: f64,
+    /// The on-screen part of the clip, in pixels from its left edge.
+    visible: (f32, f32),
+}
+
+impl WaveDraw {
+    fn element(self, muted: bool) -> impl IntoElement {
+        let color = c(0xc43cc4).opacity(if muted { 0.15 } else { 0.4 });
+        div().absolute().top_0().left_0().size_full().child(
+            canvas(
+                |_, _, _| (),
+                move |b, _, window, _| {
+                    let mid = f32::from(b.size.height) / 2.;
+                    let half = mid - 2.;
+                    let per_second = crate::sound::PEAKS_PER_SECOND as f64;
+                    let mut col = (self.visible.0 / 2.).floor() * 2.;
+                    while col < self.visible.1 {
+                        let t = self.start + col as f64 * self.secs_per_px;
+                        let i = (t * per_second) as usize;
+                        // The loudest peak under this 2 px column.
+                        let span = ((2. * self.secs_per_px * per_second).ceil() as usize).max(1);
+                        let peak = self
+                            .peaks
+                            .get(i..(i + span).min(self.peaks.len()))
+                            .map_or(0., |s| s.iter().fold(0f32, |m, &v| m.max(v)));
+                        let bar = (peak * half).max(0.5);
+                        window.paint_quad(gpui_kit::fill(
+                            Bounds::new(
+                                point(b.origin.x + px(col), b.origin.y + px(mid - bar)),
+                                gpui_kit::size(px(1.5), px(bar * 2.)),
+                            ),
+                            color,
+                        ));
+                        col += 2.;
+                    }
+                },
+            )
+            .size_full(),
+        )
     }
 }
 
