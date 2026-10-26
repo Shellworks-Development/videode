@@ -20,6 +20,7 @@ use videode_core::{
 };
 
 use crate::actions::*;
+use crate::media::{FrameKey, ViewerFrame};
 use crate::settings;
 use crate::theme::{self, c, hex};
 use crate::timeline::TimelineState;
@@ -161,6 +162,16 @@ pub struct Workspace {
     pub(crate) palette: Option<crate::palette::Palette>,
     /// Palette entries run most recently, newest first.
     pub(crate) recent_commands: Vec<String>,
+    /// Folder that relative media paths are resolved against: the project
+    /// file's folder, or the demo's.
+    pub(crate) media_root: PathBuf,
+    /// The picture in the viewer, and the frame being decoded to replace it.
+    pub(crate) frame: Option<ViewerFrame>,
+    pub(crate) frame_pending: Option<FrameKey>,
+    /// A frame that failed to decode, so it isn't retried every render.
+    pub(crate) frame_failed: Option<FrameKey>,
+    /// The viewer's screen in window coordinates, captured each frame.
+    pub(crate) viewer_bounds: std::rc::Rc<std::cell::Cell<gpui_kit::Bounds<gpui_kit::Pixels>>>,
     title: String,
 }
 
@@ -173,7 +184,7 @@ impl Workspace {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let snap = !cx.has_global::<settings::AppSettings>() || settings::get(cx).snap;
-        Self {
+        let mut ws = Self {
             doc,
             focus,
             playhead: 0,
@@ -207,8 +218,15 @@ impl Workspace {
             },
             palette: None,
             recent_commands: Vec::new(),
+            media_root: std::env::current_dir().unwrap_or_default(),
+            frame: None,
+            frame_pending: None,
+            frame_failed: None,
+            viewer_bounds: Default::default(),
             title: String::new(),
-        }
+        };
+        ws.refresh_media();
+        ws
     }
 
     /// For snapshots: open a dialog directly.
@@ -218,13 +236,18 @@ impl Workspace {
     }
 
     /// For snapshots: put the window in a state by name: `peek`, `graph`,
-    /// `output`, `focus` (second node of the selection), `edit` (typing into
-    /// its first value) or `palette=<query>`.
+    /// `output`, `media` (use the generated demo footage), `focus` (second
+    /// node of the selection), `edit` (typing into its first value) or
+    /// `palette=<query>`.
     pub fn preview(&mut self, mode: &str, window: &mut Window, cx: &mut Context<Self>) {
         match mode {
             "peek" => self.open_peek(),
             "graph" => self.open_graph(),
             "output" => self.inspect_output = true,
+            "media" => {
+                self.media_root = crate::media::demo_root();
+                self.refresh_media();
+            }
             "focus" | "edit" => {
                 let Some(clip) = self.selection.and_then(|id| self.project().clip(id)) else {
                     return;
@@ -436,9 +459,10 @@ impl Workspace {
     }
 
     fn open_demo(&mut self, _: &OpenDemo, window: &mut Window, cx: &mut Context<Self>) {
-        self.guard_unsaved(window, cx, |this, _, cx| {
+        self.guard_unsaved(window, cx, |this, window, cx| {
             this.replace_document(Document::new(demo_project(), None));
-            this.say("Opened the Signal Study demo · picture previews arrive with media import");
+            this.media_root = crate::media::demo_root();
+            this.prepare_demo_media(window, cx);
             cx.notify();
         });
     }
@@ -475,13 +499,25 @@ impl Workspace {
         match result {
             Ok(project) => {
                 self.replace_document(Document::new(project, Some(path.to_path_buf())));
-                self.say(format!("Opened {}", path.display()));
+                self.media_root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+                match self.refresh_media() {
+                    0 => self.say(format!("Opened {}", path.display())),
+                    n => self.say_error(format!(
+                        "Opened {} · {n} media file{} can't be found",
+                        path.display(),
+                        if n == 1 { "" } else { "s" }
+                    )),
+                }
             }
             Err(e) => self.say_error(format!("Couldn't open {}: {e}", path.display())),
         }
     }
 
     fn write(&mut self, path: PathBuf) {
+        // Relative media paths must still resolve from the new location.
+        if let Some(dir) = path.parent() {
+            self.rebase_media(dir);
+        }
         match std::fs::write(&path, to_kdl(&self.doc.project)) {
             Ok(()) => {
                 self.say(format!("Saved {}", path.display()));
@@ -1061,6 +1097,7 @@ fn capitalize(s: &str) -> String {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.tick_playback(window);
+        self.sync_viewer_frame(window, cx);
         self.update_title(window);
         let editing = self.modal.is_none();
 
@@ -1088,6 +1125,11 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::about))
             .on_action(cx.listener(Self::command_palette))
             .on_action(cx.listener(Self::open_output))
+            .on_action(cx.listener(Self::import_media))
+            // Files dropped anywhere on the window are imported.
+            .on_drop(cx.listener(|this, paths: &gpui_kit::ExternalPaths, _, cx| {
+                this.import_paths(paths.paths().to_vec(), cx);
+            }))
             // Editing and transport are detached while a dialog is open.
             .when(editing, |d| {
                 d.on_action(cx.listener(Self::toggle_peek))

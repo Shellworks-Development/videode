@@ -1,0 +1,11 @@
+[package]
+name = "videode-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Dynamically linked against the system FFmpeg (9.x).
+ffmpeg-next = "9"
+thiserror = "2"
+futures = { version = "0.3", default-features = false, features = ["std"] }

@@ -5,7 +5,7 @@
 //! - `demo`: the demo project with a clip selected and the playhead inside it
 //! - `settings`, `about`: open that dialog
 //! - `splash@0.4`: the launch splash frozen 0.4 s in
-//! - `peek`, `graph`, `output`, `focus`, `edit`, `palette=<query>`: see
+//! - `media`, `peek`, `graph`, `output`, `focus`, `edit`, `palette=<query>`: see
 //!   `Workspace::preview`
 //!
 //! Animations are off (end states) except in `splash@` mode.
@@ -91,6 +91,16 @@ fn main() -> anyhow::Result<()> {
             },
         )
     })?;
+    // Frames and thumbnails decode on their own threads: draw, give them a
+    // moment, and draw again until nothing new arrives.
+    for _ in 0..4 {
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        })?;
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.refresh();

@@ -6,12 +6,15 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnimationExt as _, AnyElement, Context, FocusHandle, FontWeight, SharedString, div, px,
+    AnimationExt as _, AnyElement, Context, FocusHandle, FontWeight, ImageSource, SharedString,
+    canvas, div, img, px,
 };
-use videode_core::{Clip, ClipKind, MediaId, MediaKind, NodeKind, time};
+use videode_core::look::look_at;
+use videode_core::{Clip, MediaId, MediaKind, NodeKind, time};
 
 use crate::actions::*;
 use crate::brand;
+use crate::media::MediaEngine;
 use crate::motion::{self, anim, hover_fx, key, lerp};
 use crate::theme::{self, Category, CategoryExt, c, hex};
 use crate::ui::{button, cmd_key, icon, icon_button, kbd, pane_header, swatch, tip};
@@ -27,6 +30,8 @@ fn file_menu(m: PopupMenu, _: &Workspace) -> PopupMenu {
     m.menu("New project", Box::new(NewProject))
         .menu("Open…", Box::new(OpenProject))
         .menu("Open demo project", Box::new(OpenDemo))
+        .separator()
+        .menu("Import media…", Box::new(ImportMedia))
         .separator()
         .menu("Save", Box::new(SaveProject))
         .menu("Save as…", Box::new(SaveProjectAs))
@@ -376,13 +381,8 @@ impl Workspace {
             .child(div().flex_1())
             .child(
                 icon_button("import", "import", false, false)
-                    .tooltip(tip("Import media (arrives in M3)", None))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.say(
-                            "Media import arrives in M3 · open the demo project to try editing",
-                        );
-                        cx.notify();
-                    })),
+                    .tooltip(tip("Import media", Some(cmd_key("I"))))
+                    .on_click(|_, w, cx| w.dispatch_action(Box::new(ImportMedia), cx)),
             );
 
         let (body, footer): (AnyElement, String) = match self.bin_tab {
@@ -455,11 +455,29 @@ impl Workspace {
                 .py(px(40.))
                 .text_color(c(hex::INK_DIM))
                 .child(icon("film", px(24.), c(hex::INK_FAINT)))
-                .child(div().text_color(c(hex::INK)).font_weight(FontWeight::MEDIUM).child("No media yet"))
-                .child(div().text_center().child("Import arrives with media decoding. Until then, open the demo project to edit."))
                 .child(
-                    button("bin-demo", Some("film"), "Open demo project", false)
-                        .on_click(|_, w, cx| w.dispatch_action(Box::new(OpenDemo), cx)),
+                    div()
+                        .text_color(c(hex::INK))
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("No media yet"),
+                )
+                .child(
+                    div()
+                        .text_center()
+                        .child("Drop files anywhere on the window, or import them."),
+                )
+                .child(
+                    button("bin-import", Some("import"), "Import media", false)
+                        .on_click(|_, w, cx| w.dispatch_action(Box::new(ImportMedia), cx)),
+                )
+                .child(
+                    div()
+                        .id("bin-demo")
+                        .cursor_pointer()
+                        .text_color(c(hex::INK_FAINT))
+                        .hover(|s| s.text_color(c(hex::INK)))
+                        .on_click(|_, w, cx| w.dispatch_action(Box::new(OpenDemo), cx))
+                        .child("or open the demo project"),
                 )
                 .into_any_element();
         }
@@ -487,6 +505,8 @@ impl Workspace {
                     .map(|d| time::timecode_short(d, fps))
                     .unwrap_or("still".into());
                 let uses = in_use(id);
+                let thumb = self.thumbnail(m, cx);
+                let shown_path = self.media_path(m);
                 div()
                     .id(SharedString::from(format!("media-{}", id.0)))
                     .flex()
@@ -499,9 +519,12 @@ impl Workspace {
                     .map(|d| hover_fx(d, format!("media-{}", id.0), c(hex::PLUGE_RAISED), px(5.)))
                     .tooltip(tip(
                         if m.offline {
-                            format!("{} · file not found", m.path.display())
+                            format!("{} · file not found", shown_path.display())
                         } else {
-                            format!("{} · double-click to add at the playhead", m.path.display())
+                            format!(
+                                "{} · double-click to add at the playhead",
+                                shown_path.display()
+                            )
                         },
                         None,
                     ))
@@ -512,18 +535,22 @@ impl Workspace {
                     }))
                     .child(
                         div()
-                            .w(px(40.))
-                            .h(px(26.))
+                            .w(px(64.))
+                            .h(px(36.))
                             .flex_none()
                             .flex()
                             .items_center()
                             .justify_center()
+                            .overflow_hidden()
                             .rounded(px(3.))
                             .border_1()
                             .border_color(c(if m.offline { hex::WARN } else { hex::LINE }))
                             .when(m.offline, |d| d.border_dashed())
                             .bg(c(hex::PLUGE_SUB))
-                            .child(icon(kind_icon, px(14.), c(hex::INK_FAINT))),
+                            .map(|d| match thumb {
+                                Some(image) => d.child(img(ImageSource::Render(image)).size_full()),
+                                None => d.child(icon(kind_icon, px(14.), c(hex::INK_FAINT))),
+                            }),
                     )
                     .child(
                         div()
@@ -639,67 +666,169 @@ impl Workspace {
     /* ---------- viewer ---------- */
 
     /// The topmost enabled video clip under the playhead.
-    fn picture_at_playhead(&self) -> Option<&Clip> {
+    /// The topmost enabled media clip on a video track at the playhead.
+    pub(crate) fn picture_clip(&self) -> Option<&Clip> {
         let p = self.project();
         p.sequence
             .tracks
             .iter()
             .filter(|t| t.enabled && t.kind == videode_core::StreamKind::Video)
-            .find_map(|t| p.clip_at(t.id, self.playhead))
+            .filter_map(|t| p.clip_at(t.id, self.playhead))
+            .find(|c| c.media.is_some())
+    }
+
+    /// The picture, then text clips above it, laid out on a screen of
+    /// `(w, h)` pixels showing the sequence frame scaled to fit.
+    fn screen_layers(&self, w: f32, h: f32, generating: bool) -> Vec<AnyElement> {
+        let p = self.project();
+        let seq = &p.sequence;
+        let k = w / seq.width.max(1) as f32;
+        let mut layers: Vec<AnyElement> = Vec::new();
+        let picture = self.picture_clip();
+
+        if let (Some(clip), Some(frame)) = (picture, &self.frame) {
+            let size = frame.image.size(0);
+            let (pw, ph) = (
+                (i32::from(size.width) as f32).max(1.),
+                (i32::from(size.height) as f32).max(1.),
+            );
+            // Contain the picture in the frame, then apply the clip's look.
+            let fit = (w / pw).min(h / ph);
+            let l = look_at(clip, self.playhead);
+            let (iw, ih) = (pw * fit * l.scale as f32, ph * fit * l.scale as f32);
+            let (cx, cy) = (w / 2. + l.x as f32 * k, h / 2. + l.y as f32 * k);
+            let [cl, cr, ct, cb] = l.crop.map(|v| v as f32);
+            let (left, top) = (cx - iw / 2., cy - ih / 2.);
+            layers.push(
+                div()
+                    .absolute()
+                    .left(px(left + iw * cl))
+                    .top(px(top + ih * ct))
+                    .w(px(iw * (1. - cl - cr)))
+                    .h(px(ih * (1. - ct - cb)))
+                    .overflow_hidden()
+                    .opacity(l.opacity as f32)
+                    .child(
+                        img(ImageSource::Render(frame.image.clone()))
+                            .absolute()
+                            .left(px(-iw * cl))
+                            .top(px(-ih * ct))
+                            .w(px(iw))
+                            .h(px(ih)),
+                    )
+                    .into_any_element(),
+            );
+        } else if let Some(clip) = picture {
+            let offline = clip
+                .media
+                .and_then(|m| p.media(m))
+                .is_some_and(|m| m.offline);
+            let note = if offline && generating {
+                Some(("Making the demo footage…", hex::INK_DIM))
+            } else if offline {
+                Some(("Media offline", hex::WARN))
+            } else {
+                None
+            };
+            if let Some((text, color)) = note {
+                layers.push(centered(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            div()
+                                .text_size(theme::TITLE)
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(c(color))
+                                .child(p.clip_name(clip)),
+                        )
+                        .child(div().text_color(c(hex::INK_FAINT)).child(text)),
+                ));
+            }
+        }
+
+        // Text clips, bottom track first so higher tracks draw over.
+        let mut texts = 0;
+        for t in seq
+            .tracks
+            .iter()
+            .rev()
+            .filter(|t| t.enabled && t.kind == videode_core::StreamKind::Video)
+        {
+            let Some(clip) = p.clip_at(t.id, self.playhead) else {
+                continue;
+            };
+            let Some(text) = clip.first(NodeKind::Text) else {
+                continue;
+            };
+            texts += 1;
+            let l = look_at(clip, self.playhead);
+            let size = (text.number("size") * l.scale) as f32 * k;
+            let weight = text.text("weight").parse::<f32>().unwrap_or(500.);
+            layers.push(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .opacity(l.opacity as f32)
+                    .child(
+                        div()
+                            .relative()
+                            .left(px(l.x as f32 * k))
+                            .top(px(l.y as f32 * k))
+                            .text_size(px(size.max(1.)))
+                            .line_height(gpui_kit::relative(1.1))
+                            .font_weight(FontWeight(weight))
+                            .text_color(gpui_kit::white())
+                            .whitespace_nowrap()
+                            .child(text.text("text").to_string()),
+                    )
+                    .into_any_element(),
+            );
+        }
+        if picture.is_none() && texts == 0 {
+            layers.push(centered(
+                div()
+                    .text_color(c(hex::INK_FAINT))
+                    .child("No picture at playhead"),
+            ));
+        }
+        layers
     }
 
     pub(crate) fn render_viewer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = self.project();
         let seq = &p.sequence;
-        let picture: AnyElement = match self.picture_at_playhead() {
-            None => div()
-                .text_color(c(hex::INK_FAINT))
-                .child("No picture at playhead")
-                .into_any_element(),
-            Some(clip) => {
-                let offline = clip
-                    .media
-                    .and_then(|m| p.media(m))
-                    .is_some_and(|m| m.offline);
-                let (title, sub) = match clip.kind {
-                    ClipKind::Text => (
-                        p.clip_name(clip),
-                        "Text · rendering arrives with the compositor".to_string(),
-                    ),
-                    _ if offline => (p.clip_name(clip), "Media offline".to_string()),
-                    _ => (
-                        p.clip_name(clip),
-                        "Picture preview arrives with media decoding (M3)".to_string(),
-                    ),
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(
-                        div()
-                            .text_size(theme::TITLE)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(c(if offline { hex::WARN } else { hex::INK_DIM }))
-                            .child(title),
-                    )
-                    .child(div().text_color(c(hex::INK_FAINT)).child(sub))
-                    .into_any_element()
-            }
-        };
+        let b = self.viewer_bounds.get();
+        let generating = cx.global::<MediaEngine>().generating;
+        let layers = self.screen_layers(
+            f32::from(b.size.width),
+            f32::from(b.size.height),
+            generating,
+        );
+        let bounds = self.viewer_bounds.clone();
 
         let screen = div()
+            .relative()
             .h_full()
             .max_w_full()
             .aspect_ratio(seq.width as f32 / seq.height.max(1) as f32)
+            .overflow_hidden()
             .bg(gpui_kit::black())
             .border_1()
             .border_color(c(hex::LINE))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(picture);
+            .child(
+                canvas(move |b, _, _| bounds.set(b), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
+            .children(layers);
 
         let playing = self.is_playing();
         let transport = div()
@@ -883,4 +1012,17 @@ impl Workspace {
                     .child(format!("{}×{} · {}", seq.width, seq.height, seq.fps)),
             )
     }
+}
+
+fn centered(content: impl IntoElement) -> AnyElement {
+    div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(content)
+        .into_any_element()
 }
