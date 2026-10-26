@@ -51,7 +51,7 @@ fn jobs() -> Vec<(&'static str, Vec<String>)> {
         ),
         (
             "zoneplate_ref.mov",
-            video("zoneplate=s=1280x720:r=24:ku=256:kv=256:kt2=8"),
+            video("zoneplate=s=1280x720:r=24:kx2=256:ky2=256:kt2=8,hue=s=0"),
         ),
         (
             "rule110.mov",
