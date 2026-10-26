@@ -230,7 +230,7 @@ impl Workspace {
             .cursor_pointer()
             .map(|d| hover_fx(d, "command-palette", c(hex::PLUGE_RAISED), px(5.)))
             .hover(|s| s.text_color(c(hex::INK)))
-            .tooltip(tip("Every action, node and clip", Some(cmd_key("K"))))
+            .tooltip(tip("Search", Some(cmd_key("K"))))
             .on_click(|_, w, cx| w.dispatch_action(Box::new(CommandPalette), cx))
             .child(icon("search", px(16.), c(hex::INK_DIM)))
             .child(
@@ -333,10 +333,7 @@ impl Workspace {
 
     fn add_node_to_selection(&mut self, kind: NodeKind, cx: &mut Context<Self>) {
         let Some(clip) = self.selection else {
-            self.say(format!(
-                "Select a clip first, then click {} to add it",
-                kind.name()
-            ));
+            self.say("Select a clip first");
             cx.notify();
             return;
         };
@@ -344,7 +341,7 @@ impl Workspace {
             .apply("add node", cx, |p| p.add_node(clip, kind))
             .is_some()
         {
-            self.say(format!("Added {} · {} to undo", kind.name(), cmd_key("Z")));
+            self.say(format!("Added {}", kind.name()));
         }
     }
 
@@ -427,17 +424,14 @@ impl Workspace {
     fn media_footer(&self) -> String {
         match self.project().media.len() {
             1 => "1 item · double-click to add at the playhead".into(),
-            n => format!("{n} items · double-click to add at the playhead"),
+            n => format!("{n} items"),
         }
     }
 
     fn nodes_footer(&self) -> String {
         match self.selection.and_then(|id| self.project().clip(id)) {
-            Some(clip) => format!(
-                "Click a node to add it to {}",
-                self.project().clip_name(clip)
-            ),
-            None => "Select a clip, then click a node to add it".into(),
+            Some(clip) => format!("Adds to {}", self.project().clip_name(clip)),
+            None => "Select a clip to add nodes".into(),
         }
     }
 
@@ -461,11 +455,7 @@ impl Workspace {
                         .font_weight(FontWeight::MEDIUM)
                         .child("No media yet"),
                 )
-                .child(
-                    div()
-                        .text_center()
-                        .child("Drop files anywhere on the window, or import them."),
-                )
+                .child(div().text_center().child("Drop files here"))
                 .child(
                     button("bin-import", Some("import"), "Import media", false)
                         .on_click(|_, w, cx| w.dispatch_action(Box::new(ImportMedia), cx)),

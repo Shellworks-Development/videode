@@ -128,14 +128,12 @@ impl Workspace {
         let missing = demo::missing_demo_media(&dir);
         if missing.is_empty() {
             let offline = self.refresh_media();
-            self.say(format!(
-                "Opened the Signal Study demo · {offline} file offline on purpose, to show how missing media looks"
-            ));
+            self.say(format!("Opened Signal Study · {offline} file offline"));
             return;
         }
         self.refresh_media();
         if !demo::ffmpeg_cli_available() {
-            self.say_error("The demo's footage is generated with the ffmpeg command-line tool, which isn't installed");
+            self.say_error("The demo needs the ffmpeg command-line tool");
             return;
         }
         if cx.global::<MediaEngine>().generating {
@@ -143,7 +141,7 @@ impl Workspace {
         }
         cx.global_mut::<MediaEngine>().generating = true;
         self.say(format!(
-            "Making the demo footage ({} files, about 10 s)…",
+            "Generating demo footage ({} files)…",
             missing.len()
         ));
         let job = cx
@@ -155,9 +153,7 @@ impl Workspace {
                 cx.global_mut::<MediaEngine>().generating = false;
                 let offline = ws.refresh_media();
                 match result {
-                    Ok(()) => ws.say(format!(
-                        "Demo footage ready · {offline} file offline on purpose"
-                    )),
+                    Ok(()) => ws.say(format!("Demo footage ready · {offline} file offline")),
                     Err(e) => ws.say_error(format!("Couldn't make the demo footage: {e}")),
                 }
                 cx.notify();
@@ -265,7 +261,7 @@ impl Workspace {
         match (added, failed.len()) {
             (0, 0) => self.say("Already in the bin"),
             (n, 0) => self.say(format!(
-                "Imported {n} file{} · double-click one to add it at the playhead",
+                "Imported {n} file{}",
                 if n == 1 { "" } else { "s" }
             )),
             (0, _) => self.say_error(format!("Couldn't import {}", failed.join(" · "))),

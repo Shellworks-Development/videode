@@ -280,7 +280,7 @@ impl Workspace {
                     let (at, _) = self.snapped(self.frame_at(e.position.x), None);
                     if self.apply("split", cx, |p| p.split(id, at)).is_some() {
                         let tc = self.tc(at);
-                        self.say(format!("Cut at {tc} · {} to undo", ui::cmd_key("Z")));
+                        self.say(format!("Cut at {tc}"));
                         self.flash_cut(at);
                     }
                     return;
@@ -549,13 +549,13 @@ impl Workspace {
                     )
                     .child(
                         icon_button("tool-blade", "scissors", self.tool == Tool::Blade, false)
-                            .tooltip(tip("Blade: click a clip to cut it", Some("B".into())))
+                            .tooltip(tip("Blade", Some("B".into())))
                             .on_click(cx.listener(|this, _, _, cx| this.set_tool(Tool::Blade, cx))),
                     ),
             )
             .child(
                 icon_button("snap", "magnet", snap_on, false)
-                    .tooltip(tip("Snap to grid, edges and playhead", Some("N".into())))
+                    .tooltip(tip("Snap", Some("N".into())))
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.toggle_snap(&crate::actions::ToggleSnap, w, cx)
                     })),
@@ -568,12 +568,12 @@ impl Workspace {
             )
             .child(
                 ghost_button("peek", "layers", "Peek nodes", Some("Tab"))
-                    .tooltip(tip("Unfold the selected clip's nodes", None))
+                    .tooltip(tip("Peek nodes", None))
                     .on_click(|_, w, cx| w.dispatch_action(Box::new(TogglePeek), cx)),
             )
             .child(
                 ghost_button("graph", "workflow", "Graph", Some("⇧ Tab"))
-                    .tooltip(tip("The whole sequence as a node graph", None))
+                    .tooltip(tip("Graph", None))
                     .on_click(|_, w, cx| w.dispatch_action(Box::new(ToggleGraph), cx)),
             )
             .child(div().flex_1())
@@ -928,9 +928,8 @@ impl Workspace {
                             div()
                                 .text_color(c(hex::INK))
                                 .font_weight(FontWeight::MEDIUM)
-                                .child("The timeline is empty"),
-                        )
-                        .child("Open the demo project from the bin, or open a .vde project"),
+                                .child("Empty timeline"),
+                        ),
                 )
             })
     }
