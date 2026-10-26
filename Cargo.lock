@@ -7278,6 +7278,7 @@ dependencies = [
  "videode-audio",
  "videode-core",
  "videode-media",
+ "videode-render",
  "windows-sys 0.59.0",
  "winresource",
 ]
@@ -7306,6 +7307,14 @@ dependencies = [
  "ffmpeg-next",
  "futures",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "videode-render"
+version = "0.1.0"
+dependencies = [
+ "videode-core",
+ "videode-media",
 ]
 
 [[package]]

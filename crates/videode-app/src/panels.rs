@@ -682,32 +682,52 @@ impl Workspace {
                 (i32::from(size.width) as f32).max(1.),
                 (i32::from(size.height) as f32).max(1.),
             );
-            // Contain the picture in the frame, then apply the clip's look.
-            let fit = (w / pw).min(h / ph);
+            // Contain the unturned picture in the frame, then apply the
+            // clip's look.
+            let (bw, bh) = (frame.base.0.max(1) as f32, frame.base.1.max(1) as f32);
+            let fit = (w / bw).min(h / bh);
             let l = look_at(clip, self.playhead);
-            let (iw, ih) = (pw * fit * l.scale as f32, ph * fit * l.scale as f32);
             let (cx, cy) = (w / 2. + l.x as f32 * k, h / 2. + l.y as f32 * k);
+            if frame.fx.rotation != 0. {
+                // Crop and rotation are baked in; the image is the turned
+                // picture's bounding box at the same pixel scale.
+                let s = fit * l.scale as f32;
+                let (iw, ih) = (pw * s, ph * s);
+                layers.push(
+                    img(ImageSource::Render(frame.image.clone()))
+                        .absolute()
+                        .left(px(cx - iw / 2.))
+                        .top(px(cy - ih / 2.))
+                        .w(px(iw))
+                        .h(px(ih))
+                        .opacity(l.opacity as f32)
+                        .into_any_element(),
+                );
+            }
+            let (iw, ih) = (pw * fit * l.scale as f32, ph * fit * l.scale as f32);
             let [cl, cr, ct, cb] = l.crop.map(|v| v as f32);
             let (left, top) = (cx - iw / 2., cy - ih / 2.);
-            layers.push(
-                div()
-                    .absolute()
-                    .left(px(left + iw * cl))
-                    .top(px(top + ih * ct))
-                    .w(px(iw * (1. - cl - cr)))
-                    .h(px(ih * (1. - ct - cb)))
-                    .overflow_hidden()
-                    .opacity(l.opacity as f32)
-                    .child(
-                        img(ImageSource::Render(frame.image.clone()))
-                            .absolute()
-                            .left(px(-iw * cl))
-                            .top(px(-ih * ct))
-                            .w(px(iw))
-                            .h(px(ih)),
-                    )
-                    .into_any_element(),
-            );
+            if frame.fx.rotation == 0. {
+                layers.push(
+                    div()
+                        .absolute()
+                        .left(px(left + iw * cl))
+                        .top(px(top + ih * ct))
+                        .w(px(iw * (1. - cl - cr)))
+                        .h(px(ih * (1. - ct - cb)))
+                        .overflow_hidden()
+                        .opacity(l.opacity as f32)
+                        .child(
+                            img(ImageSource::Render(frame.image.clone()))
+                                .absolute()
+                                .left(px(-iw * cl))
+                                .top(px(-ih * ct))
+                                .w(px(iw))
+                                .h(px(ih)),
+                        )
+                        .into_any_element(),
+                );
+            }
         } else if let Some(clip) = picture {
             let offline = clip
                 .media

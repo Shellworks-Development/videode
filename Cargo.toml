@@ -12,6 +12,7 @@ license = "LGPL-3.0-or-later"
 videode-core = { path = "crates/videode-core" }
 videode-media = { path = "crates/videode-media" }
 videode-audio = { path = "crates/videode-audio" }
+videode-render = { path = "crates/videode-render" }
 # gpui-kit pins a matching GPUI snapshot and re-exports gpui, gpui-base and gpui-component.
 gpui-kit = "=0.8.0"
 anyhow = "1"

@@ -15,8 +15,8 @@ use gpui_kit::{
 use gpui_kit::{Entity, Subscription};
 use videode_core::kdl_io::{from_kdl, to_kdl};
 use videode_core::{
-    ClipId, Document, EditResult, Frame, NodeId, OutputField, Project, TrackId, demo::demo_project,
-    time,
+    ClipId, Document, EditResult, Frame, NodeId, NodeKind, OutputField, Project, TrackId, Value,
+    demo::demo_project, time,
 };
 
 use crate::actions::*;
@@ -169,6 +169,10 @@ pub struct Workspace {
     /// The picture in the viewer, and the frame being decoded to replace it.
     pub(crate) frame: Option<ViewerFrame>,
     pub(crate) frame_pending: Option<FrameKey>,
+    /// The decoded picture for the viewer, before effects.
+    pub(crate) frame_source: Option<(FrameKey, std::sync::Arc<videode_media::Picture>)>,
+    /// Effects being worked out for the viewer.
+    pub(crate) fx_pending: Option<(FrameKey, videode_render::Fx)>,
     /// Bumped whenever the viewer wants a different frame; replies from
     /// older requests are dropped.
     pub(crate) frame_generation: u64,
@@ -231,6 +235,8 @@ impl Workspace {
             media_root: std::env::current_dir().unwrap_or_default(),
             frame: None,
             frame_pending: None,
+            frame_source: None,
+            fx_pending: None,
             frame_generation: 0,
             sound_live: false,
             sent_mix: None,
@@ -261,6 +267,22 @@ impl Workspace {
             "media" => {
                 self.media_root = crate::media::demo_root();
                 self.refresh_media();
+            }
+            "fx" => {
+                // Turn, blur and cool the picture under the playhead.
+                let Some(clip) = self.picture_clip().map(|c| c.id) else {
+                    return;
+                };
+                self.apply("preview fx", cx, |p| {
+                    let t = p.add_node(clip, NodeKind::Transform)?;
+                    p.set_param(clip, t, "rotation", Value::Number(12.))?;
+                    p.set_param(clip, t, "scale", Value::Number(80.))?;
+                    let b = p.add_node(clip, NodeKind::Blur)?;
+                    p.set_param(clip, b, "radius", Value::Number(6.))?;
+                    let g = p.add_node(clip, NodeKind::Grade)?;
+                    p.set_param(clip, g, "saturation", Value::Number(30.))?;
+                    p.set_param(clip, g, "temperature", Value::Number(3500.))
+                });
             }
             "focus" | "edit" => {
                 let Some(clip) = self.selection.and_then(|id| self.project().clip(id)) else {
