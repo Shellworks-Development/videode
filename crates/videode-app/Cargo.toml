@@ -17,6 +17,7 @@ videode-core.workspace = true
 videode-media.workspace = true
 videode-audio.workspace = true
 videode-render.workspace = true
+videode-export.workspace = true
 gpui-kit.workspace = true
 anyhow.workspace = true
 dirs = "6"

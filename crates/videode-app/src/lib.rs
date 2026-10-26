@@ -4,6 +4,7 @@ pub mod actions;
 pub mod assets;
 mod brand;
 mod dialogs;
+mod export;
 mod graph_view;
 mod inspector;
 mod media;
@@ -60,6 +61,7 @@ pub fn init(cx: &mut App) {
     settings::init(cx);
     media::init(cx);
     sound::init(cx);
+    export::init(cx);
     actions::bind_keys(cx);
 }
 

@@ -145,15 +145,17 @@ pub enum OutputField {
     Codec,
     Resolution,
     Quality,
+    Hardware,
     Path,
 }
 
 impl OutputField {
-    pub const ALL: [OutputField; 5] = [
+    pub const ALL: [OutputField; 6] = [
         OutputField::Container,
         OutputField::Codec,
         OutputField::Resolution,
         OutputField::Quality,
+        OutputField::Hardware,
         OutputField::Path,
     ];
 
@@ -163,19 +165,57 @@ impl OutputField {
             OutputField::Codec => "Codec",
             OutputField::Resolution => "Resolution",
             OutputField::Quality => "Quality",
+            OutputField::Hardware => "Hardware",
             OutputField::Path => "File",
         }
     }
 
-    /// The allowed values; empty for free text.
+    /// Every value the field can take; empty for free text. Which codecs
+    /// fit depends on the container, see [`OutputSettings::choices`].
     pub fn options(self) -> &'static [&'static str] {
         match self {
-            OutputField::Container => &["MP4", "MOV", "MKV", "WebM"],
-            OutputField::Codec => &["H.264", "H.265", "ProRes 422", "AV1", "VP9"],
-            OutputField::Resolution => &["1920×1080", "3840×2160", "1280×720"],
+            OutputField::Container => &["MP4", "MOV", "MKV", "WebM", "PNG sequence", "WAV"],
+            OutputField::Codec => &[
+                "H.264",
+                "H.265",
+                "AV1",
+                "VP9",
+                "ProRes 422",
+                "ProRes 422 HQ",
+                "PNG",
+                "PCM",
+            ],
+            OutputField::Resolution => &[
+                "Sequence",
+                "3840×2160",
+                "1920×1080",
+                "1280×720",
+                "1080×1920",
+            ],
             OutputField::Quality => &["Draft", "Standard", "High", "Lossless"],
+            OutputField::Hardware => &["Auto", "Off"],
             OutputField::Path => &[],
         }
+    }
+}
+
+/// The codecs a container can hold, the default first.
+pub fn container_codecs(container: &str) -> &'static [&'static str] {
+    match container {
+        "MP4" => &["H.264", "H.265", "AV1"],
+        "MOV" => &["H.264", "H.265", "ProRes 422", "ProRes 422 HQ"],
+        "MKV" => &[
+            "H.264",
+            "H.265",
+            "AV1",
+            "VP9",
+            "ProRes 422",
+            "ProRes 422 HQ",
+        ],
+        "WebM" => &["VP9", "AV1"],
+        "PNG sequence" => &["PNG"],
+        "WAV" => &["PCM"],
+        _ => &[],
     }
 }
 
@@ -186,6 +226,8 @@ pub fn container_extension(container: &str) -> Option<&'static str> {
         "MOV" => Some("mov"),
         "MKV" => Some("mkv"),
         "WebM" => Some("webm"),
+        "PNG sequence" => Some("png"),
+        "WAV" => Some("wav"),
         _ => None,
     }
 }
@@ -196,6 +238,8 @@ pub struct OutputSettings {
     pub codec: String,
     pub resolution: String,
     pub quality: String,
+    /// `Auto` uses a hardware encoder when there is one.
+    pub hardware: String,
     pub path: String,
 }
 
@@ -206,8 +250,22 @@ impl OutputSettings {
             OutputField::Codec => &self.codec,
             OutputField::Resolution => &self.resolution,
             OutputField::Quality => &self.quality,
+            OutputField::Hardware => &self.hardware,
             OutputField::Path => &self.path,
         }
+    }
+
+    /// The values a field can take now: codecs follow the container.
+    pub fn choices(&self, field: OutputField) -> &'static [&'static str] {
+        match field {
+            OutputField::Codec => container_codecs(&self.container),
+            _ => field.options(),
+        }
+    }
+
+    /// Whether the output has a picture (WAV is sound only).
+    pub fn has_video(&self) -> bool {
+        self.container != "WAV"
     }
 }
 
@@ -216,8 +274,9 @@ impl Default for OutputSettings {
         Self {
             container: "MP4".into(),
             codec: "H.264".into(),
-            resolution: "1920×1080".into(),
+            resolution: "Sequence".into(),
             quality: "High".into(),
+            hardware: "Auto".into(),
             path: "export.mp4".into(),
         }
     }

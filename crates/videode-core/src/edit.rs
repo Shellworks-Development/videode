@@ -5,7 +5,9 @@
 use std::path::PathBuf;
 
 use crate::node::{ClipKind, NodeId, NodeKind, ParamError, Value};
-use crate::project::{Clip, ClipId, MediaId, OutputField, Project, TrackId, container_extension};
+use crate::project::{
+    Clip, ClipId, MediaId, OutputField, Project, TrackId, container_codecs, container_extension,
+};
 use crate::time::Frame;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -380,9 +382,9 @@ impl Project {
     }
 
     /// Changes one Output setting. Changing the container also fixes up a
-    /// known file extension on the output path.
+    /// known file extension on the output path and picks a codec it can hold.
     pub fn set_output(&mut self, field: OutputField, value: &str) -> EditResult<()> {
-        let options = field.options();
+        let options = self.output.choices(field);
         let value = value.trim();
         let ok = if options.is_empty() {
             !value.is_empty()
@@ -397,15 +399,21 @@ impl Project {
             OutputField::Container => {
                 if let (Some(ext), Some((stem, old))) =
                     (container_extension(value), o.path.rsplit_once('.'))
-                    && ["mp4", "mov", "mkv", "webm"].contains(&old.to_ascii_lowercase().as_str())
+                    && ["mp4", "mov", "mkv", "webm", "png", "wav"]
+                        .contains(&old.to_ascii_lowercase().as_str())
                 {
                     o.path = format!("{stem}.{ext}");
                 }
                 o.container = value.into();
+                let codecs = container_codecs(value);
+                if !codecs.contains(&o.codec.as_str()) {
+                    o.codec = codecs[0].into();
+                }
             }
             OutputField::Codec => o.codec = value.into(),
             OutputField::Resolution => o.resolution = value.into(),
             OutputField::Quality => o.quality = value.into(),
+            OutputField::Hardware => o.hardware = value.into(),
             OutputField::Path => o.path = value.into(),
         }
         Ok(())
@@ -638,6 +646,13 @@ mod tests {
         p.set_output(OutputField::Container, "MKV").unwrap();
         // Unknown extensions are left alone.
         assert_eq!(p.output.path, "final cut.final");
+        // A container that can't hold the codec switches to one it can.
+        p.set_output(OutputField::Codec, "H.265").unwrap();
+        p.set_output(OutputField::Container, "WebM").unwrap();
+        assert_eq!(p.output.codec, "VP9");
+        assert!(p.set_output(OutputField::Codec, "H.264").is_err());
+        p.set_output(OutputField::Container, "WAV").unwrap();
+        assert_eq!(p.output.codec, "PCM");
     }
 
     #[test]

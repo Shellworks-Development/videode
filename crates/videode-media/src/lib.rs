@@ -369,6 +369,8 @@ impl VideoDecoder {
                 h,
                 scaling::Flags::BILINEAR,
             )?;
+            let mut ctx = ctx;
+            yuv_to_rgb_matrix(&mut ctx, f);
             self.scaler = Some((key.0, key.1, key.2, key.3, key.4, ctx));
         }
         let scaler = &mut self.scaler.as_mut().expect("set above").5;
@@ -387,6 +389,37 @@ impl VideoDecoder {
             bgra,
             time,
         })
+    }
+}
+
+/// Reads YUV with the matrix and range the frame is tagged with (swscale
+/// otherwise assumes Rec.601). Untagged HD is taken as Rec.709.
+fn yuv_to_rgb_matrix(ctx: &mut scaling::Context, f: &ff::frame::Video) {
+    use ff::color::{Range, Space};
+    use ff::ffi::{SWS_CS_BT2020, SWS_CS_ITU601, SWS_CS_ITU709};
+    let space = match f.color_space() {
+        Space::BT709 => SWS_CS_ITU709,
+        Space::BT2020NCL | Space::BT2020CL => SWS_CS_BT2020,
+        Space::BT470BG | Space::SMPTE170M => SWS_CS_ITU601,
+        _ if f.height() >= 720 => SWS_CS_ITU709,
+        _ => SWS_CS_ITU601,
+    };
+    let full = i32::from(f.color_range() == Range::JPEG);
+    // Bindgen types these constants differently per platform.
+    #[allow(clippy::unnecessary_cast)]
+    let space = space as i32;
+    unsafe {
+        let table = ff::ffi::sws_getCoefficients(space);
+        ff::ffi::sws_setColorspaceDetails(
+            ctx.as_mut_ptr(),
+            table,
+            full,
+            table,
+            1,
+            0,
+            1 << 16,
+            1 << 16,
+        );
     }
 }
 

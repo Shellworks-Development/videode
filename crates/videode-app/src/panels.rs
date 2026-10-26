@@ -18,7 +18,7 @@ use crate::media::MediaEngine;
 use crate::motion::{self, anim, hover_fx, key, lerp};
 use crate::theme::{self, Category, CategoryExt, c, hex};
 use crate::ui::{button, cmd_key, icon, icon_button, kbd, pane_header, swatch, tip};
-use crate::workspace::{BinTab, View, Workspace};
+use crate::workspace::{Area, BinTab, View, Workspace};
 
 const TOP_BAR_H: f32 = 38.;
 const STATUS_H: f32 = 26.;
@@ -90,6 +90,9 @@ fn view_menu(m: PopupMenu, ws: &Workspace) -> PopupMenu {
     )
     .menu_with_check("Snapping", ws.snap, Box::new(ToggleSnap))
     .separator()
+    .menu_with_check("Edit", ws.area == Area::Edit, Box::new(ShowEdit))
+    .menu_with_check("Export", ws.area == Area::Export, Box::new(Export))
+    .separator()
     .menu_with_check("Graph view", ws.view == View::Graph, Box::new(ToggleGraph))
     .menu("Command palette", Box::new(CommandPalette))
     .separator()
@@ -144,6 +147,70 @@ impl Workspace {
                     None => menu,
                 }
             })
+    }
+
+    /// Edit and Export, as one segmented control.
+    fn area_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let tab = |id: &'static str,
+                   label: &'static str,
+                   cat: Category,
+                   key: &'static str,
+                   area: Area,
+                   this: &Self,
+                   cx: &mut Context<Self>| {
+            let on = this.area == area;
+            div()
+                .id(id)
+                .h(px(22.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .rounded(px(4.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(c(if on { hex::INK } else { hex::INK_DIM }))
+                .when(on, |d| d.bg(c(hex::PLUGE_CONTROL)))
+                .when(!on, |d| {
+                    hover_fx(d, id, c(hex::PLUGE_RAISED), px(4.))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(c(hex::INK)))
+                })
+                .tooltip(tip(label, Some(cmd_key(key))))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.area = area;
+                    cx.notify();
+                }))
+                .child(div().w(px(6.)).h(px(6.)).rounded(px(2.)).bg(cat.color()))
+                .child(label)
+        };
+        div()
+            .ml(px(10.))
+            .flex()
+            .flex_none()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(6.))
+            .border_1()
+            .border_color(c(hex::LINE))
+            .bg(c(hex::PLUGE_SUB))
+            .child(tab(
+                "area-edit",
+                "Edit",
+                Category::Source,
+                "1",
+                Area::Edit,
+                self,
+                cx,
+            ))
+            .child(tab(
+                "area-export",
+                "Export",
+                Category::Output,
+                "4",
+                Area::Export,
+                self,
+                cx,
+            ))
     }
 
     pub(crate) fn render_top_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -276,6 +343,7 @@ impl Workspace {
                     .child(self.menu("Playback", playback_menu, cx))
                     .child(self.menu("Help", help_menu, cx)),
             )
+            .child(self.area_tabs(cx))
             .child(crumbs)
             .child(
                 div()
@@ -300,11 +368,6 @@ impl Workspace {
                                 Some(cmd_key("⇧ Z")),
                             ))
                             .on_click(|_, w, cx| w.dispatch_action(Box::new(Redo), cx)),
-                    )
-                    .child(
-                        button("export", Some("upload"), "Export", true)
-                            .tooltip(tip("Open the Output node", Some(cmd_key("E"))))
-                            .on_click(|_, w, cx| w.dispatch_action(Box::new(Export), cx)),
                     ),
             )
     }

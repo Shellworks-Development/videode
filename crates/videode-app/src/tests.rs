@@ -356,3 +356,34 @@ fn relinking_one_file_finds_its_neighbours(cx: &mut TestAppContext) {
     cx.simulate_keystrokes(&format!("{MOD}-z"));
     assert_eq!(offline(&ws, cx), before, "one undo puts all three back");
 }
+
+#[gpui::test]
+fn export_area_and_presets(cx: &mut TestAppContext) {
+    use crate::workspace::Area;
+    let (ws, cx) = open(cx);
+    cx.simulate_keystrokes(&format!("{MOD}-4"));
+    assert_eq!(ws.read_with(cx, |ws, _| ws.area), Area::Export);
+    ws.update(cx, |ws, cx| ws.apply_preset(3, cx));
+    let output = |cx: &mut VisualTestContext| {
+        ws.read_with(cx, |ws, _| {
+            let o = &ws.doc.project.output;
+            (o.container.clone(), o.codec.clone(), o.path.clone())
+        })
+    };
+    assert_eq!(
+        output(cx),
+        (
+            "MOV".into(),
+            "ProRes 422 HQ".into(),
+            "signal_study.mov".into()
+        )
+    );
+    // A preset is one undo step.
+    cx.simulate_keystrokes(&format!("{MOD}-z"));
+    assert_eq!(
+        output(cx),
+        ("MP4".into(), "H.264".into(), "signal_study.mp4".into())
+    );
+    cx.simulate_keystrokes(&format!("{MOD}-1"));
+    assert_eq!(ws.read_with(cx, |ws, _| ws.area), Area::Edit);
+}

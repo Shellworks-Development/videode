@@ -1,0 +1,16 @@
+[package]
+name = "videode-export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+videode-core.workspace = true
+videode-media.workspace = true
+videode-render.workspace = true
+videode-audio.workspace = true
+ffmpeg-next = "9"
+thiserror = "2"
+# Draws Text clips with the app's own font.
+ab_glyph = "0.2"
