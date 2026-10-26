@@ -24,7 +24,7 @@ From M2: every clip is a chain of nodes. Edit any value in the inspector, peek a
 
 ## Build
 
-Requires a recent stable Rust toolchain and FFmpeg (shared libraries plus the `ffmpeg` tool, developed against 9.0), found through `pkg-config`.
+Requires Rust 1.95 or newer (`rustup update stable`) and FFmpeg (shared libraries plus the `ffmpeg` tool, developed against 9.0), found through `pkg-config`.
 
 ```sh
 cargo run -p videode-app            # opens the editor
