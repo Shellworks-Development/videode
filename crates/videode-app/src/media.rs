@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use gpui_kit::{App, Context, Global, PathPromptOptions, RenderImage, Window};
 use videode_core::look::look_at;
-use videode_core::{Media, MediaKind, Project};
+use videode_core::{Media, MediaId, MediaKind, Project};
 use videode_media::{FramePool, FrameRequest, Kind, MediaError, Picture, demo};
 use videode_render::Fx;
 
@@ -185,6 +185,62 @@ impl Workspace {
             this.update(cx, |ws, cx| ws.import_paths(paths, cx)).ok();
         })
         .detach();
+    }
+
+    /// Asks where an offline file went, points it there, and relinks any
+    /// other offline files found by name in the same folder. One undo step.
+    pub(crate) fn relink_media(&mut self, id: MediaId, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Relink".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            this.update(cx, |ws, cx| ws.relink_to(id, path, cx)).ok();
+        })
+        .detach();
+    }
+
+    pub(crate) fn relink_to(&mut self, id: MediaId, path: PathBuf, cx: &mut Context<Self>) {
+        let folder = path.parent().map(Path::to_path_buf);
+        let others: Vec<(MediaId, PathBuf)> = self
+            .project()
+            .media
+            .iter()
+            .filter(|m| m.offline && m.id != id)
+            .filter_map(|m| {
+                let candidate = folder.as_ref()?.join(m.path.file_name()?);
+                candidate.exists().then_some((m.id, candidate))
+            })
+            .collect();
+        let n = 1 + others.len();
+        let done = self.apply("relink media", cx, |p| {
+            p.relink(id, path)?;
+            for (m, candidate) in others {
+                p.relink(m, candidate)?;
+            }
+            Ok(())
+        });
+        if done.is_some() {
+            let offline = self.refresh_media();
+            self.say(match offline {
+                0 => format!("Relinked {n} file{}", if n == 1 { "" } else { "s" }),
+                _ => format!(
+                    "Relinked {n} file{} · {offline} still offline",
+                    if n == 1 { "" } else { "s" }
+                ),
+            });
+            // Clear any earlier failure so the viewer tries again.
+            self.frame_failed = None;
+        }
+        cx.notify();
     }
 
     /// Probes files in the background, then adds the readable ones to the

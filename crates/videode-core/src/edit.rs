@@ -2,6 +2,8 @@
 //! bounds and overlaps, and either applies fully or returns an error
 //! without changing the project.
 
+use std::path::PathBuf;
+
 use crate::node::{ClipKind, NodeId, NodeKind, ParamError, Value};
 use crate::project::{Clip, ClipId, MediaId, OutputField, Project, TrackId, container_extension};
 use crate::time::Frame;
@@ -330,6 +332,17 @@ impl Project {
         Ok(i)
     }
 
+    /// Points a media item at a different file; clips using it follow.
+    pub fn relink(&mut self, media: MediaId, path: PathBuf) -> EditResult<()> {
+        let m = self
+            .media
+            .iter_mut()
+            .find(|m| m.id == media)
+            .ok_or(EditError::NoSuchMedia)?;
+        m.path = path;
+        Ok(())
+    }
+
     pub fn remove_node(&mut self, clip: ClipId, node: NodeId) -> EditResult<()> {
         let i = self.processing_node_index(clip, node)?;
         self.clip_mut(clip).expect("checked above").nodes.remove(i);
@@ -468,6 +481,17 @@ mod tests {
         let b = p.add_media_clip(m, Some(v1), 150).unwrap();
         p.trim_end(b, 250).unwrap();
         (p, a, b, v1, a1, m)
+    }
+
+    #[test]
+    fn relink_points_media_at_a_new_file() {
+        let (mut p, _, _, _, _, m) = fixture();
+        p.relink(m, "/new/a.mov".into()).unwrap();
+        assert_eq!(p.media(m).unwrap().path, PathBuf::from("/new/a.mov"));
+        assert_eq!(
+            p.relink(MediaId(999), "x".into()),
+            Err(EditError::NoSuchMedia)
+        );
     }
 
     #[test]

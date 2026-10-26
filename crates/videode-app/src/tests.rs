@@ -322,3 +322,37 @@ fn bypass_and_reorder_from_peek(cx: &mut TestAppContext) {
     });
     assert_eq!(order, [NodeKind::Source, NodeKind::Fade, NodeKind::Grade]);
 }
+
+#[gpui::test]
+fn relinking_one_file_finds_its_neighbours(cx: &mut TestAppContext) {
+    let (ws, cx) = open(cx);
+    let dir = std::env::temp_dir().join(format!("videode-relink-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["dusk_gradient.mov", "mandel_dive.mp4", "voiceover_t3.wav"] {
+        std::fs::write(dir.join(name), b"").unwrap();
+    }
+    let offline = |ws: &Entity<Workspace>, cx: &mut VisualTestContext| {
+        ws.read_with(cx, |ws, _| {
+            ws.doc.project.media.iter().filter(|m| m.offline).count()
+        })
+    };
+    let before = offline(&ws, cx);
+    ws.update(cx, |ws, cx| {
+        let dusk = ws
+            .doc
+            .project
+            .media
+            .iter()
+            .find(|m| m.file_name() == "dusk_gradient.mov")
+            .unwrap()
+            .id;
+        ws.relink_to(dusk, dir.join("dusk_gradient.mov"), cx);
+    });
+    assert_eq!(
+        offline(&ws, cx),
+        before - 3,
+        "the two neighbours came along"
+    );
+    cx.simulate_keystrokes(&format!("{MOD}-z"));
+    assert_eq!(offline(&ws, cx), before, "one undo puts all three back");
+}

@@ -534,10 +534,17 @@ impl Workspace {
                     .into_any_element(),
                 );
                 if m.offline {
+                    let media_id = m.id;
                     rows.push(
                         div()
-                            .text_color(c(hex::WARN))
-                            .child("File not found")
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.))
+                            .child(div().text_color(c(hex::WARN)).child("File not found"))
+                            .child(button("relink", Some("link"), "Relink…", false).on_click(
+                                cx.listener(move |this, _, _, cx| this.relink_media(media_id, cx)),
+                            ))
                             .into_any_element(),
                     );
                 }
