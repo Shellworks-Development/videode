@@ -11,14 +11,15 @@ Inside, everything is a node: media, clips, effects, tracks, the sequence and th
 
 ## Status
 
-Milestone M3: media and preview. The viewer shows real footage:
+Milestone M4: playback and sound.
 
-- **Import:** File → Import media…, Ctrl/Cmd I, the bin's import button, or drop files on the window. Files are probed with FFmpeg (codec, size, frame rate, duration, audio) and added as one undo step.
-- **Bin:** thumbnails decode in the background; missing files show as offline.
-- **Viewer:** frame-accurate at the playhead, decoded at display size by a pool of decoder threads with a frame cache. Transform (position, scale), Crop, Opacity and Fade are applied; titles draw on top.
-- **Demo:** File → Open demo project generates its test-pattern footage with the `ffmpeg` tool on first open.
+- **Sound:** audio clips play through the default output device, mixed with their Gain and Fade nodes; muted tracks are silent. At normal speed the sound's clock drives the playhead, so picture follows audio. J/K/L shuttle runs silent.
+- **Meters:** peak meters beside the viewer, green to −12 dB, yellow to −3 dB, then red.
+- **Timeline:** waveforms on audio clips and filmstrips on video clips.
+- **Viewer:** Grade, Blur and rotation are drawn (on the CPU for now), along with Transform, Crop, Opacity and Fade.
+- **Media:** import by menu, Ctrl/Cmd I or drag and drop; thumbnails; offline files can be relinked, and other missing files in the same folder come along.
 
-From M2: every clip is a chain of nodes. Edit any value in the inspector, peek at a clip's nodes with **Tab**, see the whole sequence as a graph with **Shift+Tab**, and search everything with the command palette (**Ctrl/Cmd K**). From M1: timeline editing, undo/redo and `.vde` project files. Playback with sound and export arrive in M4–M5.
+From M2: every clip is a chain of nodes. Edit any value in the inspector, peek at a clip's nodes with **Tab**, see the whole sequence as a graph with **Shift+Tab**, and search everything with the command palette (**Ctrl/Cmd K**). From M1: timeline editing, undo/redo and `.vde` project files. Export arrives in M5.
 
 ![M3 viewer and bin](docs/m3-media.png)
 
@@ -60,7 +61,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for tests and pull requests.
 ```
 crates/
   videode-core/   project model and node graph engine (no UI)
-  videode-media/  FFmpeg probing, frame-accurate decoding, decoder pool, demo footage
+  videode-media/  FFmpeg probing, frame-accurate video and sample-accurate audio decoding
+  videode-audio/  mixer and output engine (cpal); its sample clock drives playback
+  videode-render/ pixel effects: Grade, Blur, rotation
   videode-app/    the GPUI application: window, theme, editor shell
 assets/fonts/     Geist and Geist Mono (SIL OFL 1.1)
 mockup/           approved HTML mockup with synthetic demo media
