@@ -46,6 +46,34 @@ impl Document {
         self.project != self.saved
     }
 
+    /// Re-checks which media files are missing. Being offline is a fact
+    /// about the disk, not an edit, so this changes neither the undo history
+    /// nor whether the document counts as unsaved.
+    pub fn refresh_offline(&mut self, missing: impl Fn(&crate::project::Media) -> bool) -> usize {
+        let mut offline = 0;
+        for m in &mut self.project.media {
+            m.offline = missing(m);
+            offline += m.offline as usize;
+        }
+        let flags: Vec<_> = self
+            .project
+            .media
+            .iter()
+            .map(|m| (m.id, m.offline))
+            .collect();
+        for project in std::iter::once(&mut self.saved)
+            .chain(self.undo.iter_mut().map(|e| &mut e.project))
+            .chain(self.redo.iter_mut().map(|e| &mut e.project))
+        {
+            for m in &mut project.media {
+                if let Some((_, off)) = flags.iter().find(|(id, _)| *id == m.id) {
+                    m.offline = *off;
+                }
+            }
+        }
+        offline
+    }
+
     pub fn mark_saved(&mut self, path: PathBuf) {
         self.saved = self.project.clone();
         self.path = Some(path);
@@ -254,5 +282,25 @@ mod tests {
         d.begin_gesture();
         d.gesture(|p| p.move_clip(c, v1, 0)).unwrap();
         assert!(!d.end_gesture("move"));
+    }
+
+    #[test]
+    fn offline_refresh_is_not_an_edit() {
+        let (mut d, _) = doc();
+        assert_eq!(d.refresh_offline(|_| true), 1);
+        assert!(d.project.media[0].offline);
+        assert!(!d.is_dirty());
+        assert_eq!(d.undo_label(), None);
+        d.edit("split", |p| {
+            let c = p.sequence.clips[0].id;
+            p.split(c, 50)
+        })
+        .unwrap();
+        d.refresh_offline(|_| false);
+        d.undo();
+        assert!(
+            !d.project.media[0].offline,
+            "undo doesn't bring back stale offline flags"
+        );
     }
 }

@@ -29,7 +29,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev \
-            libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 mesa-vulkan-drivers
+            libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 mesa-vulkan-drivers \
+            pkg-config clang ffmpeg libavcodec-dev libavformat-dev libavutil-dev \
+            libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev
+
+      # FFmpeg is linked dynamically; the CLI is used by tests and the demo.
+      - name: Install FFmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg pkg-config
+
+      - name: Install FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = "ffmpeg-n9.0-latest-win64-gpl-shared-9.0"
+          Invoke-WebRequest "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$zip.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath $env:RUNNER_TEMP
+          $dir = Join-Path $env:RUNNER_TEMP $zip
+          "FFMPEG_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Join-Path $dir "bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Format
         if: runner.os == 'Linux'

@@ -1,5 +1,7 @@
 //! "Signal Study", the demo project from the HTML mockup. Its media are
-//! synthetic test patterns; until media import lands the files are not read.
+//! synthetic test patterns that the app generates on first open (see
+//! `videode_media::demo`); `bars_tone.mov` is never made, to show offline
+//! media.
 
 use crate::kdl_io::from_kdl;
 use crate::project::Project;
@@ -8,14 +10,14 @@ pub const DEMO_KDL: &str = r#"
 videode version=1
 project "Signal Study"
 media {
-    file id=1 path="media/dusk_gradient.mov" kind=video duration=384 codec="ProRes 422 HQ" format="3840×2160"
-    file id=2 path="media/mandel_dive.mp4" kind=video duration=384 codec=H.264 format="1920×1080"
-    file id=3 path="media/colony_sim.mov" kind=video duration=384 codec="ProRes 4444" format="1920×1080"
-    file id=4 path="media/zoneplate_ref.mov" kind=video duration=384 codec="DNxHR HQ" format="3840×2160"
-    file id=5 path="media/rule110.mov" kind=video duration=384 codec="ProRes 422" format="1920×1080"
+    file id=1 path="media/dusk_gradient.mov" kind=video duration=384 codec=H.264 format="1280×720 · 24 fps"
+    file id=2 path="media/mandel_dive.mp4" kind=video duration=384 codec=H.264 format="1280×720 · 24 fps"
+    file id=3 path="media/colony_sim.mov" kind=video duration=384 codec=H.264 format="1280×720 · 24 fps"
+    file id=4 path="media/zoneplate_ref.mov" kind=video duration=384 codec=H.264 format="1280×720 · 24 fps"
+    file id=5 path="media/rule110.mov" kind=video duration=384 codec=H.264 format="1280×720 · 24 fps"
     file id=6 path="media/bars_tone.mov" kind=video duration=384 codec="ProRes 422" format="1920×1080" status=offline
-    file id=7 path="media/voiceover_t3.wav" kind=audio duration=960 codec="PCM 48 kHz" format=Mono
-    file id=8 path="media/pad_drone.wav" kind=audio duration=1440 codec="PCM 48 kHz" format=Stereo
+    file id=7 path="media/voiceover_t3.wav" kind=audio duration=960 codec=PCM format="Mono · 48 kHz"
+    file id=8 path="media/pad_drone.wav" kind=audio duration=1440 codec=PCM format="Stereo · 48 kHz"
 }
 sequence "Main" fps=24 fps-den=1 width=1920 height=1080 {
     track V2 kind=video name=Titles {
